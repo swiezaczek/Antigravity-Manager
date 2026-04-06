@@ -366,7 +366,14 @@ pub async fn start_oauth_flow(app_handle: Option<tauri::AppHandle>, oauth_client
         let path_arg = format!("--user-data-dir={}", app_dir.to_string_lossy());
         
         #[cfg(target_os = "windows")]
-        let browsers = vec!["msedge.exe", "chrome.exe"];
+        let browsers = vec![
+            "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+            "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+            "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+            "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+            "msedge.exe", 
+            "chrome.exe"
+        ];
         
         #[cfg(target_os = "macos")]
         let browsers = vec!["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"];
