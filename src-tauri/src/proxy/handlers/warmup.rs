@@ -137,7 +137,6 @@ pub async fn handle_warmup(
             &claude_request,
             &project_id,
             false,
-            None,
             Some(account_id.as_str()),
             "warmup",
             None, // [NEW] No token for warmup

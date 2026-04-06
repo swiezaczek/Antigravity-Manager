@@ -531,7 +531,7 @@ pub async fn warm_up_all_accounts() -> Result<String, String> {
                 let now_ts = chrono::Utc::now().timestamp();
                 
                 for (task_idx, (id, email, model, token, pid, pct)) in warmup_items.into_iter().enumerate() {
-                    logger::log_info(&format!(
+                    crate::modules::logger::log_info(&format!(
                         "[Warmup {}/{}] {} @ {} ({}%)",
                         task_idx + 1, total, model, email, pct
                     ));
