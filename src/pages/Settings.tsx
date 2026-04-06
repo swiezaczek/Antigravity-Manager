@@ -57,7 +57,9 @@ function Settings() {
         },
         scheduled_warmup: {
             enabled: false,
-            monitored_models: []
+            monitored_models: [],
+            min_jitter_secs: 30,
+            max_jitter_secs: 120
         },
         quota_protection: {
             enabled: false,
