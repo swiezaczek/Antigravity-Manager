@@ -55,11 +55,12 @@ pub fn start_scheduler(app_handle: Option<tauri::AppHandle>, proxy_state: crate:
     tauri::async_runtime::spawn(async move {
         logger::log_info("Smart Warmup Scheduler started. Monitoring quota at 100%...");
         
-        // Scan every 10 minutes
-        let mut interval = time::interval(Duration::from_secs(600));
-
+        // [OPSEC] Wektor F: Usunięto deterministyczny interval, wdrożono Macro-Jitter
         loop {
-            interval.tick().await;
+            // Czekamy od 7 do 14 minut między pełnymi przebiegami, rozbijając wzorzec Cron Spike
+            use rand::Rng;
+            let jitter: u64 = rand::thread_rng().gen_range(420..840);
+            tokio::time::sleep(Duration::from_secs(jitter)).await;
 
             // Load configuration
             let Ok(app_config) = config::load_app_config() else {
@@ -71,13 +72,18 @@ pub fn start_scheduler(app_handle: Option<tauri::AppHandle>, proxy_state: crate:
             }
             
             // Get all accounts (no longer filtering by level)
-            let Ok(accounts) = account::list_accounts() else {
+            let Ok(mut accounts) = account::list_accounts() else {
                 continue;
             };
 
             if accounts.is_empty() {
                 continue;
             }
+
+            // [OPSEC] Wektor F: Przetasowanie (Shuffle) wektora kont, aby każde API pingowanie o quotę
+            // wychodziło do Google w losowej kolejności, uniemożliwiając detekcję korelacji stada kont.
+            use rand::seq::SliceRandom;
+            accounts.shuffle(&mut rand::thread_rng());
 
             logger::log_info(&format!(
                 "[Scheduler] Scanning {} accounts for 100% quota models...",
@@ -184,49 +190,34 @@ pub fn start_scheduler(app_handle: Option<tauri::AppHandle>, proxy_state: crate:
 
                 let handle_for_warmup = app_handle.clone();
                 let state_for_warmup = proxy_state.clone();
+                let min_j = std::cmp::max(1, app_config.scheduled_warmup.min_jitter_secs);
+                let max_j = std::cmp::max(min_j, app_config.scheduled_warmup.max_jitter_secs);
 
                 tokio::spawn(async move {
                     let mut success = 0;
-                    let batch_size = 3;
                     let now_ts = chrono::Utc::now().timestamp();
+                    let warmup_tasks_clone = warmup_tasks.clone();
                     
-                    for (batch_idx, batch) in warmup_tasks.chunks(batch_size).enumerate() {
-                        let mut handles = Vec::new();
+                    for (task_idx, (id, email, model, token, pid, pct, history_key)) in warmup_tasks_clone.into_iter().enumerate() {
+                        let global_idx = task_idx + 1;
                         
-                        for (task_idx, (id, email, model, token, pid, pct, history_key)) in batch.iter().enumerate() {
-                            let global_idx = batch_idx * batch_size + task_idx + 1;
-                            let id = id.clone();
-                            let email = email.clone();
-                            let model = model.clone();
-                            let token = token.clone();
-                            let pid = pid.clone();
-                            let pct = *pct;
-                            let history_key = history_key.clone();
-                            
-                            logger::log_info(&format!(
-                                "[Warmup {}/{}] {} @ {} ({}%)",
-                                global_idx, total, model, email, pct
-                            ));
-                            
-                            let handle = tokio::spawn(async move {
-                                let result = quota::warmup_model_directly(&token, &model, &pid, &email, pct, Some(&id)).await;
-                                (result, history_key)
-                            });
-                            handles.push(handle);
+                        logger::log_info(&format!(
+                            "[Warmup {}/{}] {} @ {} ({}%)",
+                            global_idx, total, model, email, pct
+                        ));
+                        
+                        let result = quota::warmup_model_directly(&token, &model, &pid, &email, pct, Some(&id)).await;
+                        
+                        if result {
+                            success += 1;
+                            record_warmup_history(&history_key, now_ts);
                         }
                         
-                        for handle in handles {
-                            match handle.await {
-                                Ok((true, history_key)) => {
-                                    success += 1;
-                                    record_warmup_history(&history_key, now_ts);
-                                }
-                                _ => {}
-                            }
-                        }
-                        
-                        if batch_idx < (warmup_tasks.len() + batch_size - 1) / batch_size - 1 {
-                            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                        if task_idx < total - 1 {
+                            use rand::Rng;
+                            let delay = rand::thread_rng().gen_range(min_j..=max_j);
+                            logger::log_info(&format!("[Scheduler] Jitter delay: {}s before next request (organic mimicry)...", delay));
+                            tokio::time::sleep(tokio::time::Duration::from_secs(delay)).await;
                         }
                     }
 

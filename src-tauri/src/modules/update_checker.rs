@@ -158,8 +158,11 @@ async fn check_updater_json() -> Result<UpdateInfo, String> {
 
 async fn create_client() -> Result<reqwest::Client, String> {
     let mut builder = reqwest::Client::builder()
-        .user_agent("Antigravity-Manager")
-        .timeout(std::time::Duration::from_secs(10));
+        // [OPSEC] Use a generic UA for update checks (GitHub API, not Google).
+        // Avoids correlating a Chrome TLS fingerprint with Node.js traffic to Google.
+        .user_agent("antigravity-manager")
+        .timeout(std::time::Duration::from_secs(10))
+        .http1_only();
 
     // Load config to check for upstream proxy
     if let Ok(config) = crate::modules::config::load_app_config() {

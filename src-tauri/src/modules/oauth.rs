@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 // Google OAuth configuration
-const CLIENT_ID: &str = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com";
-const CLIENT_SECRET: &str = "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";
+const CLIENT_ID: &str = "32555940559.apps.googleusercontent.com"; // [OPSEC] Wektor C
+const CLIENT_SECRET: &str = "ZmssLNjJy2998hD4CTg2ejr2"; // [OPSEC] Wektor C
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const USERINFO_URL: &str = "https://www.googleapis.com/oauth2/v2/userinfo";
 const TOKEN_REFRESH_SKEW_SECONDS: i64 = 900;
@@ -390,7 +390,7 @@ async fn exchange_code_once(
 
     let response = client
         .post(TOKEN_URL)
-        .header(rquest::header::USER_AGENT, crate::constants::NATIVE_OAUTH_USER_AGENT.as_str())
+        .headers(crate::utils::http::google_oauth_headers())
         .form(&params)
         .send()
         .await
@@ -540,7 +540,7 @@ async fn refresh_access_token_once(
 
     let response = client
         .post(TOKEN_URL)
-        .header(rquest::header::USER_AGENT, crate::constants::NATIVE_OAUTH_USER_AGENT.as_str())
+        .headers(crate::utils::http::google_oauth_headers())
         .form(&params)
         .send()
         .await
@@ -642,14 +642,14 @@ pub async fn refresh_access_token(
 /// Get user info
 pub async fn get_user_info(access_token: &str, account_id: Option<&str>) -> Result<UserInfo, String> {
     let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
-        pool.get_effective_client(account_id, 15).await
+        pool.get_effective_standard_client(account_id, 15).await
     } else {
-        crate::utils::http::get_client()
+        crate::utils::http::get_standard_client()
     };
     
     let response = client
         .get(USERINFO_URL)
-        .bearer_auth(access_token)
+        .headers(crate::utils::http::google_get_headers(access_token))
         .send()
         .await
         .map_err(|e| format!("User info request failed: {}", e))?;

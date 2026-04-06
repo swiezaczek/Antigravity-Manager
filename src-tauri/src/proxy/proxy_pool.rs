@@ -7,7 +7,7 @@ use futures::{stream, StreamExt};
 use std::time::Duration;
 use crate::proxy::config::{ProxyPoolConfig, ProxySelectionStrategy, ProxyEntry};
 
-use rquest_util::Emulation;
+
 use std::sync::OnceLock;
 
 /// 全局代理池管理器单例
@@ -78,7 +78,8 @@ impl ProxyPoolManager {
     /// 3. 如果以上均无，则检查全局上游代理 (Upstream Proxy) [由调用方 fallback]
     pub async fn get_effective_client(&self, account_id: Option<&str>, timeout_secs: u64) -> Client {
         let mut builder = Client::builder()
-            .emulation(Emulation::Chrome123)
+            // [OPSEC] No emulation, force HTTP/1.1 to match Node.js MITM fingerprint
+            .http1_only()
             .timeout(Duration::from_secs(timeout_secs));
         
         // 尝试获取代理配置
@@ -88,7 +89,7 @@ impl ProxyPoolManager {
             // 没有 account_id 的通用请求，如果代理池启用，则默认从中选择节点作为出口
             let config = self.config.read().await;
             if config.enabled {
-                let res = self.select_proxy_from_pool(&config).await.ok().flatten();
+                let res = self.select_proxy_from_pool(&config, None).await.ok().flatten();
                 if let Some(ref p) = res {
                     tracing::info!("[Proxy] Route: Generic Request -> Proxy {} (Pool)", p.entry_id);
                 } else {
@@ -120,13 +121,14 @@ impl ProxyPoolManager {
             }
         }
 
-        builder.build().unwrap_or_else(|_| Client::new())
+        builder.build().unwrap_or_else(|_| Client::builder().http1_only().build().expect("critical: fallback client build failed"))
     }
 
     /// [NEW] 为指定账号获取“最终生效”的无特征 Standard HttpClient (专门用于纯净场景，如 OAuth 退还)
     pub async fn get_effective_standard_client(&self, account_id: Option<&str>, timeout_secs: u64) -> Client {
         let mut builder = Client::builder()
-            // 无 Emulation 设置，走纯正的基础 TLS 指纹
+            // [OPSEC] No emulation, force HTTP/1.1 to match Node.js MITM fingerprint
+            .http1_only()
             .timeout(Duration::from_secs(timeout_secs));
         
         // 尝试获取代理配置
@@ -136,7 +138,7 @@ impl ProxyPoolManager {
             // 没有 account_id 的通用请求，如果代理池启用，则默认从中选择节点作为出口
             let config = self.config.read().await;
             if config.enabled {
-                let res = self.select_proxy_from_pool(&config).await.ok().flatten();
+                let res = self.select_proxy_from_pool(&config, None).await.ok().flatten();
                 if let Some(ref p) = res {
                     tracing::info!("[Proxy] Route: Generic Request (Standard Client) -> Proxy {} (Pool)", p.entry_id);
                 } else {
@@ -166,7 +168,7 @@ impl ProxyPoolManager {
             }
         }
 
-        builder.build().unwrap_or_else(|_| Client::new())
+        builder.build().unwrap_or_else(|_| Client::builder().http1_only().build().expect("critical: fallback standard client build failed"))
     }
 
     /// 为账号获取代理
@@ -187,7 +189,7 @@ impl ProxyPoolManager {
         }
 
         // 2. 否则从池中策略选择 (公用池)
-        let res = self.select_proxy_from_pool(&config).await?;
+        let res = self.select_proxy_from_pool(&config, Some(account_id)).await?;
         if let Some(ref p) = res {
             tracing::info!("[Proxy] Route: Account {} -> Proxy {} (Pool)", account_id, p.entry_id);
         }
@@ -218,6 +220,7 @@ impl ProxyPoolManager {
     async fn select_proxy_from_pool(
         &self,
         config: &ProxyPoolConfig,
+        account_id: Option<&str>,
     ) -> Result<Option<PoolProxyConfig>, String> {
         // [FIX] 专属隔离逻辑：剔除所有已被绑定的代理，保护专属 IP 账号的安全
         let bound_ids: std::collections::HashSet<String> = self.account_bindings
@@ -242,11 +245,21 @@ impl ProxyPoolManager {
         }
         
         let selected = match config.strategy {
-            ProxySelectionStrategy::RoundRobin => {
-                self.select_round_robin(&healthy_proxies)
-            }
-            ProxySelectionStrategy::Random => {
-                self.select_random(&healthy_proxies)
+            ProxySelectionStrategy::RoundRobin | ProxySelectionStrategy::Random => {
+                if let Some(acc_id) = account_id {
+                    // [OPSEC] Wektor P: Account Hash Identity. Zapobiega "Impossible Device Travel".
+                    use std::hash::{Hash, Hasher};
+                    use std::collections::hash_map::DefaultHasher;
+                    let mut hasher = DefaultHasher::new();
+                    acc_id.hash(&mut hasher);
+                    let index = (hasher.finish() as usize) % healthy_proxies.len();
+                    tracing::debug!("[Proxy] Route: Account {} -> Proxy {} (Account Hash Identity)", acc_id, healthy_proxies[index].id);
+                    Some(healthy_proxies[index])
+                } else if config.strategy == ProxySelectionStrategy::RoundRobin {
+                    self.select_round_robin(&healthy_proxies)
+                } else {
+                    self.select_random(&healthy_proxies)
+                }
             }
             ProxySelectionStrategy::Priority => {
                 self.select_by_priority(&healthy_proxies)
@@ -468,9 +481,9 @@ impl ProxyPoolManager {
 
         let client_result = Client::builder()
             .proxy(proxy_cfg.proxy)
-            .emulation(Emulation::Chrome123)
+            // [OPSEC] No Chrome emulation for health checks — use native BoringSSL
+            .http1_only()
             .timeout(Duration::from_secs(10))
-            .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
             .build();
         
         let client = match client_result {

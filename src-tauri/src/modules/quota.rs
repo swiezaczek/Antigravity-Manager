@@ -4,11 +4,10 @@ use serde_json::json;
 use crate::models::QuotaData;
 use crate::modules::config;
 
-// Quota API endpoints (fallback order: Sandbox → Daily → Prod)
-const QUOTA_API_ENDPOINTS: [&str; 3] = [
-    "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:fetchAvailableModels",
-    "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
+// Quota API endpoints (fallback order: Prod → Daily)
+const QUOTA_API_ENDPOINTS: [&str; 2] = [
     "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
+    "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
 ];
 
 /// Critical retry threshold: considered near recovery when quota reaches 95%
@@ -111,18 +110,19 @@ async fn create_long_standard_client(account_id: Option<&str>) -> rquest::Client
     }
 }
 
-const CLOUD_CODE_BASE_URL: &str = "https://daily-cloudcode-pa.sandbox.googleapis.com";
+const CLOUD_CODE_BASE_URL: &str = "https://cloudcode-pa.googleapis.com"; // [OPSEC] Wektor U: prod zamiast staging
+
+
+
 
 /// Fetch project ID and subscription tier
 async fn fetch_project_id(access_token: &str, email: &str, account_id: Option<&str>) -> (Option<String>, Option<String>) {
     let client = create_standard_client(account_id).await;
-    let meta = json!({"metadata": {"ideType": "ANTIGRAVITY"}});
+    let meta = json!({"metadata": {"ide_type": "VSCODE", "ide_version": "1.97.2", "ide_name": "vscode"}}); // [OPSEC] Wektor S & C
 
     let res = client
         .post(format!("{}/v1internal:loadCodeAssist", CLOUD_CODE_BASE_URL))
-        .header(rquest::header::AUTHORIZATION, format!("Bearer {}", access_token))
-        .header(rquest::header::CONTENT_TYPE, "application/json")
-        .header(rquest::header::USER_AGENT, crate::constants::NATIVE_OAUTH_USER_AGENT.as_str())
+        .headers(crate::utils::http::google_api_headers(access_token))
         .json(&meta)
         .send()
         .await;
@@ -200,7 +200,8 @@ pub async fn fetch_quota_with_cache(
     let (project_id, subscription_tier) = if let Some(pid) = cached_project_id {
         (Some(pid.to_string()), None)
     } else {
-        fetch_project_id(access_token, email, account_id).await
+        let res = fetch_project_id(access_token, email, account_id).await;
+        res
     };
     
     // We keep project_id to store in the DB, but we NO LONGER force inject it into payload if it's absent
@@ -212,6 +213,14 @@ pub async fn fetch_quota_with_cache(
         json!({}) // Empty payload fallback
     };
     
+    // [OPSEC] MITM Mimic - Execute fetchUserInfo before fetchAvailableModels
+    let _ = client
+        .post(format!("{}/v1internal:fetchUserInfo", CLOUD_CODE_BASE_URL))
+        .headers(crate::utils::http::google_api_headers(access_token))
+        .json(&payload)
+        .send()
+        .await;
+
     let mut last_error: Option<AppError> = None;
 
     for (ep_idx, ep_url) in QUOTA_API_ENDPOINTS.iter().enumerate() {
@@ -219,8 +228,7 @@ pub async fn fetch_quota_with_cache(
 
         match client
             .post(*ep_url)
-            .bearer_auth(access_token)
-            .header(rquest::header::USER_AGENT, crate::constants::NATIVE_OAUTH_USER_AGENT.as_str())
+            .headers(crate::utils::http::google_api_headers(access_token))
             .json(&payload)
             .send()
             .await
@@ -390,7 +398,7 @@ pub async fn warmup_model_directly(
         .timeout(std::time::Duration::from_secs(60))
         .no_proxy()
         .build()
-        .unwrap_or_else(|_| rquest::Client::new());
+        .unwrap_or_else(|_| rquest::Client::builder().http1_only().build().expect("critical: warmup loopback client build failed"));
     let resp = client
         .post(&warmup_url)
         .header("Content-Type", "application/json")
@@ -438,49 +446,45 @@ pub async fn warm_up_all_accounts() -> Result<String, String> {
         let mut warmup_items = Vec::new();
         let mut has_near_ready_models = false;
 
-        // Concurrently fetch quotas (batch size 5)
-        let batch_size = 5;
-        for batch in target_accounts.chunks(batch_size) {
-            let mut handles = Vec::new();
-            for account in batch {
-                let account = account.clone();
-                let handle = tokio::spawn(async move {
-                    let (token, pid) = match get_valid_token_for_warmup(&account).await {
-                        Ok(t) => t,
-                        Err(_) => return None,
-                    };
-                    let quota = fetch_quota_with_cache(&token, &account.email, Some(&pid), Some(&account.id)).await.ok();
-                    Some((account.id.clone(), account.email.clone(), token, pid, quota))
-                });
-                handles.push(handle);
-            }
+        // [OPSEC] Sequential quota scanning — no parallel batching to avoid concurrent
+        // API calls from the same IP that would betray automated tooling.
+        for account in &target_accounts {
+            let (token, pid) = match get_valid_token_for_warmup(account).await {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+            let quota = fetch_quota_with_cache(&token, &account.email, Some(&pid), Some(&account.id)).await.ok();
 
-            for handle in handles {
-                if let Ok(Some((id, email, token, pid, Some((fresh_quota, _))))) = handle.await {
-                    // [FIX] 预热阶段检测到 403 时，使用统一禁用逻辑，确保账号文件和索引同时更新
-                    if fresh_quota.is_forbidden {
-                        crate::modules::logger::log_warn(&format!(
-                            "[Warmup] Account {} returned 403 Forbidden during quota fetch, marking as forbidden",
-                            email
-                        ));
-                        let _ = crate::modules::account::mark_account_forbidden(&id, "Warmup: 403 Forbidden - quota fetch denied");
-                        continue;
-                    }
-                    let mut account_warmed_series = std::collections::HashSet::new();
-                    for m in fresh_quota.models {
-                        if m.percentage >= 100 {
-                            let model_to_ping = m.name.clone();
+            if let Some((fresh_quota, _)) = quota {
+                // [FIX] 预热阶段检测到 403 时，使用统一禁用逻辑
+                if fresh_quota.is_forbidden {
+                    crate::modules::logger::log_warn(&format!(
+                        "[Warmup] Account {} returned 403 Forbidden during quota fetch, marking as forbidden",
+                        account.email
+                    ));
+                    let _ = crate::modules::account::mark_account_forbidden(&account.id, "Warmup: 403 Forbidden - quota fetch denied");
+                    continue;
+                }
+                let mut account_warmed_series = std::collections::HashSet::new();
+                for m in fresh_quota.models {
+                    if m.percentage >= 100 {
+                        let model_to_ping = m.name.clone();
 
-                            // Removed hardcoded whitelist - now warms up any model at 100%
-                            if !account_warmed_series.contains(&model_to_ping) {
-                                warmup_items.push((id.clone(), email.clone(), model_to_ping.clone(), token.clone(), pid.clone(), m.percentage));
-                                account_warmed_series.insert(model_to_ping);
-                            }
-                        } else if m.percentage >= NEAR_READY_THRESHOLD {
-                            has_near_ready_models = true;
+                        if !account_warmed_series.contains(&model_to_ping) {
+                            warmup_items.push((account.id.clone(), account.email.clone(), model_to_ping.clone(), token.clone(), pid.clone(), m.percentage));
+                            account_warmed_series.insert(model_to_ping);
                         }
+                    } else if m.percentage >= NEAR_READY_THRESHOLD {
+                        has_near_ready_models = true;
                     }
                 }
+            }
+
+            // [OPSEC] Small jitter between sequential quota scans
+            {
+                use rand::Rng;
+                let scan_delay = rand::thread_rng().gen_range(2..=8);
+                tokio::time::sleep(tokio::time::Duration::from_secs(scan_delay)).await;
             }
         }
 
@@ -514,42 +518,37 @@ pub async fn warm_up_all_accounts() -> Result<String, String> {
                 total
             ));
             
+            let (min_j, max_j) = if let Ok(app_config) = crate::modules::config::load_app_config() {
+                let min = std::cmp::max(1, app_config.scheduled_warmup.min_jitter_secs);
+                let max = std::cmp::max(min, app_config.scheduled_warmup.max_jitter_secs);
+                (min, max)
+            } else {
+                (30, 120)
+            };
+
             tokio::spawn(async move {
                 let mut success = 0;
-                let batch_size = 3;
                 let now_ts = chrono::Utc::now().timestamp();
                 
-                for (batch_idx, batch) in warmup_items.chunks(batch_size).enumerate() {
-                    let mut handles = Vec::new();
+                for (task_idx, (id, email, model, token, pid, pct)) in warmup_items.into_iter().enumerate() {
+                    logger::log_info(&format!(
+                        "[Warmup {}/{}] {} @ {} ({}%)",
+                        task_idx + 1, total, model, email, pct
+                    ));
                     
-                    for (id, email, model, token, pid, pct) in batch.iter() {
-                        let id = id.clone();
-                        let email = email.clone();
-                        let model = model.clone();
-                        let token = token.clone();
-                        let pid = pid.clone();
-                        let pct = *pct;
-                        
-                        let handle = tokio::spawn(async move {
-                            let result = warmup_model_directly(&token, &model, &pid, &email, pct, Some(&id)).await;
-                            (result, email, model)
-                        });
-                        handles.push(handle);
+                    let result = warmup_model_directly(&token, &model, &pid, &email, pct, Some(&id)).await;
+                    
+                    if result {
+                        success += 1;
+                        let history_key = format!("{}:{}:100", email, model);
+                        crate::modules::scheduler::record_warmup_history(&history_key, now_ts);
                     }
                     
-                    for handle in handles {
-                        match handle.await {
-                            Ok((true, email, model)) => {
-                                success += 1;
-                                let history_key = format!("{}:{}:100", email, model);
-                                crate::modules::scheduler::record_warmup_history(&history_key, now_ts);
-                            }
-                            _ => {}
-                        }
-                    }
-                    
-                    if batch_idx < (warmup_items.len() + batch_size - 1) / batch_size - 1 {
-                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                    if task_idx < total - 1 {
+                        use rand::Rng;
+                        let delay = rand::thread_rng().gen_range(min_j..=max_j);
+                        crate::modules::logger::log_info(&format!("[Warmup] Jitter delay: {}s before next request...", delay));
+                        tokio::time::sleep(tokio::time::Duration::from_secs(delay)).await;
                     }
                 }
                 

@@ -1842,12 +1842,11 @@ pub async fn refresh_all_quotas_logic() -> Result<RefreshStats, String> {
     use std::sync::Arc;
     use tokio::sync::Semaphore;
 
-    const MAX_CONCURRENT: usize = 5;
+    const MAX_CONCURRENT: usize = 1;
     let start = std::time::Instant::now();
 
     crate::modules::logger::log_info(&format!(
-        "Starting batch refresh of all account quotas (Concurrent mode, max: {})",
-        MAX_CONCURRENT
+        "Starting batch refresh of all account quotas (Sequential mode with Jitter)"
     ));
     let accounts = list_accounts()?;
 
@@ -1871,12 +1870,20 @@ pub async fn refresh_all_quotas_logic() -> Result<RefreshStats, String> {
             }
             true
         })
-        .map(|mut account| {
+        .enumerate()
+        .map(|(idx, mut account)| {
             let email = account.email.clone();
             let account_id = account.id.clone();
             let permit = semaphore.clone();
             async move {
                 let _guard = permit.acquire().await.unwrap();
+                if idx > 0 {
+                    use rand::Rng;
+                    let delay = rand::thread_rng().gen_range(15..=45);
+                    crate::modules::logger::log_info(&format!("  - Waiting {}s before processing {}", delay, email));
+                    tokio::time::sleep(tokio::time::Duration::from_secs(delay)).await;
+                }
+                
                 crate::modules::logger::log_info(&format!("  - Processing {}", email));
                 match fetch_quota_with_retry(&mut account).await {
                     Ok(quota) => {

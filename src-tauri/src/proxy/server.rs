@@ -1599,11 +1599,12 @@ async fn admin_fetch_zai_models(
         .and_then(|v| v.as_str())
         .unwrap_or("https://api.z.ai");
 
-    // 尝试从 z.ai 获取模型
-    let client = reqwest::Client::new();
+    // 尝试从 z.ai 获取模型 - ZAŁATANO (Używamy Chrome123 / maskowanego rquest w innym przypadku goły reqwest demaskuje Managera)
+    let client = crate::utils::http::get_standard_client();
     let resp = client
         .get(format!("{}/v1/models", base_url))
-        .header("Authorization", format!("Bearer {}", api_key))
+        .header("authorization", format!("Bearer {}", api_key))
+        .header("user-agent", crate::constants::NATIVE_OAUTH_USER_AGENT.as_str())
         .send()
         .await
         .map_err(|e| {

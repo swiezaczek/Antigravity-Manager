@@ -75,8 +75,13 @@ fn try_fetch_remote_version() -> Option<String> {
 
     std::thread::spawn(move || {
         let result = (|| -> Option<String> {
+            // [OPSEC] Use standard reqwest but with headers matching Node.js fingerprint.
+            // This is a non-critical informational request (version check), but we still
+            // mask the client to avoid TLS fingerprint divergence on Google Cloud Run.
             let client = reqwest::blocking::Client::builder()
+                .user_agent(NATIVE_OAUTH_USER_AGENT.as_str())
                 .timeout(std::time::Duration::from_secs(5))
+                .http1_only()
                 .build()
                 .ok()?;
 
@@ -183,7 +188,16 @@ pub static CURRENT_VERSION: LazyLock<String> = LazyLock::new(|| {
 
 /// Native OAuth Authorization User-Agent
 pub static NATIVE_OAUTH_USER_AGENT: LazyLock<String> = LazyLock::new(|| {
-    format!("vscode/1.X.X (Antigravity/{})", CURRENT_VERSION.as_str())
+    let platform_info = match std::env::consts::OS {
+        "macos" => match std::env::consts::ARCH {
+            "aarch64" => "darwin/arm64",
+            _ => "darwin/amd64"
+        },
+        "windows" => "windows/amd64",
+        "linux" => "linux/amd64",
+        _ => "linux/amd64",
+    };
+    format!("gl-node/22.21.1 {} google-api-nodejs-client/10.3.0", platform_info) // [OPSEC] Wektor T User_Agent_Sync
 });
 
 /// Current resolved Antigravity version (e.g., "4.1.31")
@@ -192,9 +206,17 @@ pub fn get_current_version() -> String {
 }
 
 /// Returns a full User-Agent string for the current version
-/// "Antigravity/4.1.31 (Macintosh; Intel Mac OS X 10_15_7) Chrome/132.0.6834.160 Electron/39.2.3"
 pub fn get_default_user_agent() -> String {
-    format!("Antigravity/{} (Macintosh; Intel Mac OS X 10_15_7) Chrome/132.0.6834.160 Electron/39.2.3", env!("CARGO_PKG_VERSION"))
+    let platform_info = match std::env::consts::OS {
+        "macos" => match std::env::consts::ARCH {
+            "aarch64" => "darwin/arm64",
+            _ => "darwin/amd64"
+        },
+        "windows" => "windows/amd64",
+        "linux" => "linux/amd64",
+        _ => "linux/amd64",
+    };
+    format!("gl-node/22.21.1 {} google-api-nodejs-client/10.3.0", platform_info) // [OPSEC] Wektor T2
 }
 
 /// Global Session ID (generated once per app launch)
@@ -202,32 +224,20 @@ pub static SESSION_ID: LazyLock<String> = LazyLock::new(|| {
     uuid::Uuid::new_v4().to_string()
 });
 
-/// Returns the best version choice between local and remote
-/// Version selection: max(local installation, remote latest, known stable 4.1.31)
-/// This prevents model rejection due to outdated client version headers.
+/// Returns the user agent string required to match the IDE plugin fingerprint.
 pub static USER_AGENT: LazyLock<String> = LazyLock::new(|| {
-    let (config, source) = resolve_version_config();
-
-    tracing::info!(
-        version = %config.version,
-        source = ?source,
-        "User-Agent initialized"
-    );
-
     let platform_info = match std::env::consts::OS {
-        "macos" => "Macintosh; Intel Mac OS X 10_15_7",
-        "windows" => "Windows NT 10.0; Win64; x64",
-        "linux" => "X11; Linux x86_64",
-        _ => "X11; Linux x86_64",
+        "macos" => match std::env::consts::ARCH {
+            "aarch64" => "darwin/arm64",
+            _ => "darwin/amd64"
+        },
+        "windows" => "windows/amd64",
+        "linux" => "linux/amd64",
+        _ => "linux/amd64",
     };
 
-    format!(
-        "Antigravity/{} ({}) Chrome/{} Electron/{}",
-        config.version,
-        platform_info,
-        config.chrome,
-        config.electron
-    )
+    let ua = format!("gl-node/22.21.1 {} google-api-nodejs-client/10.3.0", platform_info); // [OPSEC] Wektor T User_Agent_Sync
+    ua
 });
 
 #[cfg(test)]

@@ -43,17 +43,14 @@ pub fn mask_email(email: &str) -> String {
     }
 }
 
-// Cloud Code v1internal endpoints (fallback order: Sandbox → Daily → Prod)
-// 优先使用 Sandbox/Daily 环境以避免 Prod环境的 429 错误 (Ref: Issue #1176)
+// Cloud Code v1internal endpoints (fallback order: Prod → Daily)
+// Dopasowano do logiki oryginalnej wtyczki: najpierw Prod, potem Daily. Sandbox usunięty.
 const V1_INTERNAL_BASE_URL_PROD: &str = "https://cloudcode-pa.googleapis.com/v1internal";
 const V1_INTERNAL_BASE_URL_DAILY: &str = "https://daily-cloudcode-pa.googleapis.com/v1internal";
-const V1_INTERNAL_BASE_URL_SANDBOX: &str =
-    "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal";
 
-const V1_INTERNAL_BASE_URL_FALLBACKS: [&str; 3] = [
-    V1_INTERNAL_BASE_URL_SANDBOX, // 优先级 1: Sandbox (已知有效且稳定)
-    V1_INTERNAL_BASE_URL_DAILY,   // 优先级 2: Daily (备用)
-    V1_INTERNAL_BASE_URL_PROD,    // 优先级 3: Prod (仅作为兜底)
+const V1_INTERNAL_BASE_URL_FALLBACKS: [&str; 2] = [
+    V1_INTERNAL_BASE_URL_PROD,    // 优先级 1: Prod (zgodnie z oryginałem)
+    V1_INTERNAL_BASE_URL_DAILY,   // 优先级 2: Daily (zgodnie z oryginałem)
 ];
 
 pub struct UpstreamClient {
@@ -82,7 +79,7 @@ impl UpstreamClient {
                             error = %err_without_proxy,
                             "Failed to create default HTTP client without proxy; falling back to bare client"
                         );
-                        Client::new()
+                        Client::builder().http1_only().build().expect("critical: upstream fallback client build failed")
                     }
                 }
             }
@@ -101,12 +98,16 @@ impl UpstreamClient {
         proxy_config: Option<crate::proxy::config::UpstreamProxyConfig>,
     ) -> Result<Client, rquest::Error> {
         let mut builder = Client::builder()
-            .emulation(rquest_util::Emulation::Chrome123)
-            // Connection settings (优化连接复用，减少建立开销)
+            // [OPSEC] NO Chrome123 emulation! The original Antigravity plugin is Node.js,
+            // not Chrome. Using Chrome TLS fingerprint with Node.js User-Agent headers
+            // creates an instantly detectable contradiction for Google WAF.
+            // Pure rquest (BoringSSL) fingerprint is closer to Node.js (OpenSSL) than Chrome.
+            .http1_only() // [OPSEC] Force HTTP/1.1 to match MITM logs showing Connection: close
+            // Connection settings
             .connect_timeout(Duration::from_secs(20))
-            .pool_max_idle_per_host(16) // 每主机最多 16 个空闲连接
-            .pool_idle_timeout(Duration::from_secs(90)) // 空闲连接保持 90 秒
-            .tcp_keepalive(Duration::from_secs(60)) // TCP 保活探测 60 秒
+            .pool_max_idle_per_host(16)
+            .pool_idle_timeout(Duration::from_secs(90))
+            .tcp_keepalive(Duration::from_secs(60))
             .timeout(Duration::from_secs(600));
 
         builder = Self::apply_default_user_agent(builder);
@@ -131,7 +132,8 @@ impl UpstreamClient {
     ) -> Result<Client, rquest::Error> {
         // Reuse base settings similar to default client but with specific proxy
         let builder = Client::builder()
-            .emulation(rquest_util::Emulation::Chrome123)
+            // [OPSEC] NO Chrome123 emulation — must match Node.js transport fingerprint
+            .http1_only() // [OPSEC] Force HTTP/1.1 per MITM Connection: close pattern
             .connect_timeout(Duration::from_secs(20))
             .pool_max_idle_per_host(16)
             .pool_idle_timeout(Duration::from_secs(90))
@@ -147,13 +149,9 @@ impl UpstreamClient {
         if header::HeaderValue::from_str(ua).is_ok() {
             builder.user_agent(ua)
         } else {
-            tracing::warn!(
-                user_agent = %ua,
-                "Invalid default User-Agent value, using fallback"
-            );
-            builder.user_agent("antigravity")
+            builder.user_agent("google-api-nodejs-client/10.3.0")
         }
-    }
+    } // [OPSEC] Wektor T Fallback CleanUp
 
     /// Set dynamic User-Agent override
     pub async fn set_user_agent_override(&self, ua: Option<String>) {
@@ -270,51 +268,17 @@ impl UpstreamClient {
         // [NEW] Get client based on account (cached in proxy pool manager)
         let client = self.get_client(account_id).await;
 
-        // 构建 Headers (所有端点复用)
-        let mut headers = header::HeaderMap::new();
+        // [OPSEC] Use canonical Google header helper for correct ordering
+        let mut headers = crate::utils::http::google_api_headers(access_token);
+        
+        // Override user-agent with dynamic value (may differ from default)
         headers.insert(
-            header::CONTENT_TYPE,
-            header::HeaderValue::from_static("application/json"),
-        );
-        headers.insert(
-            header::AUTHORIZATION,
-            header::HeaderValue::from_str(&format!("Bearer {}", access_token))
-                .map_err(|e| e.to_string())?,
-        );
-
-        headers.insert(
-            header::USER_AGENT,
+            "user-agent",
             header::HeaderValue::from_str(&self.get_user_agent().await).unwrap_or_else(|e| {
                 tracing::warn!("Invalid User-Agent header value, using fallback: {}", e);
-                header::HeaderValue::from_static("antigravity")
+                header::HeaderValue::from_static("google-api-nodejs-client/10.3.0")
             }),
-        );
-
-        // [ENHANCED] 注入 Antigravity 官方客户端关键特征 Headers
-        // 1. Client Identity
-        headers.insert(
-            "x-client-name",
-            header::HeaderValue::from_static("antigravity"),
-        );
-        if let Ok(ver) = header::HeaderValue::from_str(&crate::constants::CURRENT_VERSION) {
-            headers.insert("x-client-version", ver);
-        }
-
-        // 2. Device & Session Identity
-        // Machine ID (Persistent)
-        if let Ok(mid) = machine_uid::get() {
-             if let Ok(mid_val) = header::HeaderValue::from_str(&mid) {
-                 headers.insert("x-machine-id", mid_val);
-             }
-        }
-        // Session ID (Per App Launch)
-        if let Ok(sess_val) = header::HeaderValue::from_str(&crate::constants::SESSION_ID) {
-            headers.insert("x-vscode-sessionid", sess_val);
-        }
-
-        // [REMOVED v4.1.24] x-goog-api-client (gl-node/fire/grpc) header has been removed.
-        // This header belongs to the IDE's JS layer, not the official client's egress.
-        // Sending it creates a contradictory "Electron + Node.js" fingerprint.
+        ); // [OPSEC] Wektor T Fallback CleanUp
 
         // 注入额外的 Headers (如 anthropic-beta)
         for (k, v) in extra_headers {

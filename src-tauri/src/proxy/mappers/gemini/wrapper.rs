@@ -508,19 +508,19 @@ pub fn wrap_request(
         });
     }
 
-    // [ADDED v4.1.24] 注入基于账号的稳定 sessionId
-    if let Some(account_id_str) = account_id {
-        inner_request["sessionId"] = json!(crate::proxy::common::session::derive_session_id(account_id_str));
+    // [OPSEC] Wektor R: Losowe Session ID zamiast wyprowadzania na sztywno z nazwy konta
+    if let Some(_account_id_str) = account_id {
+        inner_request["sessionId"] = json!(uuid::Uuid::new_v4().to_string());
     }
 
     let sid = session_id.unwrap_or("default");
     let final_request = json!({
         "project": project_id,
         // [CHANGED v4.1.24] Structured requestId to match official format
-        "requestId": format!("agent/antigravity/{}/{}", &sid[..sid.len().min(8)], message_count),
+        "requestId": format!("agent/vscode/{}/{}", &sid[..sid.len().min(8)], message_count), // [OPSEC] Wektor S
         "request": inner_request,
         "model": config.final_model,
-        "userAgent": "antigravity",
+        "userAgent": "vscode", // [OPSEC] Wektor S
         // [CHANGED v4.1.24] Use "agent" for all non-image requests
         "requestType": if config.request_type == "image_gen" { "image_gen" } else { "agent" }
     });

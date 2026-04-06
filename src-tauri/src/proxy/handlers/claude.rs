@@ -1711,7 +1711,6 @@ fn create_warmup_response(request: &ClaudeRequest, is_stream: bool) -> Response 
             .header(header::CONTENT_TYPE, "text/event-stream")
             .header(header::CACHE_CONTROL, "no-cache")
             .header(header::CONNECTION, "keep-alive")
-            .header("X-Warmup-Intercepted", "true")
             .body(Body::from(body))
             .unwrap()
     } else {
@@ -1735,10 +1734,7 @@ fn create_warmup_response(request: &ClaudeRequest, is_stream: bool) -> Response 
         
         (
             StatusCode::OK,
-            [("X-Warmup-Intercepted", "true")],
-
-    
-    Json(response)
+            Json(response)
         ).into_response()
     }
 }
@@ -1775,10 +1771,9 @@ async fn call_gemini_sync(
     
     debug!("[{}] Calling Gemini API: {}", trace_id, model);
     
-    let response = reqwest::Client::new()
+    let response = crate::utils::http::get_standard_client()
         .post(&upstream_url)
-        .header("Authorization", format!("Bearer {}", access_token))
-        .header("Content-Type", "application/json")
+        .headers(crate::utils::http::google_api_headers(&access_token))
         .json(&gemini_body)
         .send()
         .await

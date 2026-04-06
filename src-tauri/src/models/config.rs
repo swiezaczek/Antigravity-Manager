@@ -41,6 +41,14 @@ pub struct ScheduledWarmupConfig {
     /// List of models to warmup
     #[serde(default = "default_warmup_models")]
     pub monitored_models: Vec<String>,
+
+    /// Minimal jitter delay in seconds
+    #[serde(default = "default_min_jitter")]
+    pub min_jitter_secs: u64,
+
+    /// Maximum jitter delay in seconds
+    #[serde(default = "default_max_jitter")]
+    pub max_jitter_secs: u64,
 }
 
 fn default_warmup_models() -> Vec<String> {
@@ -52,11 +60,21 @@ fn default_warmup_models() -> Vec<String> {
     ]
 }
 
+fn default_min_jitter() -> u64 {
+    30
+}
+
+fn default_max_jitter() -> u64 {
+    120
+}
+
 impl ScheduledWarmupConfig {
     pub fn new() -> Self {
         Self {
             enabled: false,
             monitored_models: default_warmup_models(),
+            min_jitter_secs: default_min_jitter(),
+            max_jitter_secs: default_max_jitter(),
         }
     }
 }
