@@ -700,9 +700,6 @@ pub fn close_antigravity(#[allow(unused_variables)] timeout_secs: u64) -> Result
     Ok(())
 }
 
-/// Start Antigravity
-}
-
 // [Zero-Emission V3] Process OS Env Spoofing
 fn apply_spoofed_env(cmd: &mut std::process::Command, account_id: Option<&str>) {
     if let Some(id) = account_id {
