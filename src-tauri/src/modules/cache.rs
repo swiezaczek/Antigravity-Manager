@@ -32,6 +32,14 @@ pub fn get_antigravity_cache_paths() -> Vec<PathBuf> {
 
             // Application caches
             paths.push(home.join("Library/Caches/com.google.antigravity"));
+            
+            // [Zero-Emission V3] Identity Residue Paths
+            paths.push(home.join("Library/Application Support/Antigravity/auth-tokens"));
+            paths.push(home.join("Library/Application Support/Antigravity/Network"));
+            paths.push(home.join("Library/Application Support/Antigravity/Cache"));
+            paths.push(home.join("Library/Application Support/Antigravity/GPUCache"));
+            paths.push(home.join("Library/Application Support/Antigravity/Local Storage"));
+            paths.push(home.join("Library/Application Support/Antigravity/Session Storage"));
 
             // Alternative cache locations that may exist
             paths.push(home.join(".antigravity"));
@@ -52,6 +60,13 @@ pub fn get_antigravity_cache_paths() -> Vec<PathBuf> {
         if let Ok(app_data) = std::env::var("APPDATA") {
             let app_path = PathBuf::from(&app_data);
             paths.push(app_path.join("Antigravity\\Cache"));
+            
+            // [Zero-Emission V3] Identity Residue Paths
+            paths.push(app_path.join("Antigravity\\auth-tokens"));
+            paths.push(app_path.join("Antigravity\\Network"));
+            paths.push(app_path.join("Antigravity\\GPUCache"));
+            paths.push(app_path.join("Antigravity\\Local Storage"));
+            paths.push(app_path.join("Antigravity\\Session Storage"));
         }
     }
 
@@ -61,6 +76,14 @@ pub fn get_antigravity_cache_paths() -> Vec<PathBuf> {
             // XDG cache directory
             paths.push(home.join(".cache/Antigravity"));
             paths.push(home.join(".cache/google-antigravity"));
+            
+            // [Zero-Emission V3] Identity Residue Paths
+            paths.push(home.join(".config/Antigravity/auth-tokens"));
+            paths.push(home.join(".config/Antigravity/Network"));
+            paths.push(home.join(".config/Antigravity/Cache"));
+            paths.push(home.join(".config/Antigravity/GPUCache"));
+            paths.push(home.join(".config/Antigravity/Local Storage"));
+            paths.push(home.join(".config/Antigravity/Session Storage"));
 
             // Alternative locations
             paths.push(home.join(".antigravity"));

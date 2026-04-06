@@ -102,7 +102,7 @@ impl UpstreamClient {
             // not Chrome. Using Chrome TLS fingerprint with Node.js User-Agent headers
             // creates an instantly detectable contradiction for Google WAF.
             // Pure rquest (BoringSSL) fingerprint is closer to Node.js (OpenSSL) than Chrome.
-            .http1_only() // [OPSEC] Force HTTP/1.1 to match MITM logs showing Connection: close
+            .http1_only() // [OPSEC] Force HTTP/1.1 to match Node.js gaxios (Connection: keep-alive)
             // Connection settings
             .connect_timeout(Duration::from_secs(20))
             .pool_max_idle_per_host(16)

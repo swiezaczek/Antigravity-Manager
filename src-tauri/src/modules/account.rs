@@ -1879,8 +1879,8 @@ pub async fn refresh_all_quotas_logic() -> Result<RefreshStats, String> {
                 let _guard = permit.acquire().await.unwrap();
                 if idx > 0 {
                     use rand::Rng;
-                    let delay = rand::thread_rng().gen_range(15..=45);
-                    crate::modules::logger::log_info(&format!("  - Waiting {}s before processing {}", delay, email));
+                    let delay = rand::thread_rng().gen_range(30..=120);
+                    crate::modules::logger::log_info(&format!("  - Waiting {}s before processing {} (Zero-Emission Jitter)", delay, email));
                     tokio::time::sleep(tokio::time::Duration::from_secs(delay)).await;
                 }
                 

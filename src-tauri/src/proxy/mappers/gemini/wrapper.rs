@@ -32,6 +32,16 @@ pub fn wrap_request(
     // 复制 body 以便修改
     let mut inner_request = body.clone();
 
+    // [OPSEC] Wektor U: Proaktywne czyszczenie wszelkich potencjalnych pól telemetrycznych wstrzykniętych z IDE
+    if let Some(obj) = inner_request.as_object_mut() {
+        obj.remove("clientEnv");
+        obj.remove("machineId");
+        obj.remove("macMachineId");
+        obj.remove("telemetry");
+        obj.remove("vscodeSessionId");
+        obj.remove("clientSessionId");
+    }
+
     // 深度清理 [undefined] 字符串 (Cherry Studio 等客户端常见注入)
     crate::proxy::mappers::common_utils::deep_clean_undefined(&mut inner_request, 0);
 
@@ -508,16 +518,26 @@ pub fn wrap_request(
         });
     }
 
-    // [OPSEC] Wektor R: Losowe Session ID zamiast wyprowadzania na sztywno z nazwy konta
-    if let Some(_account_id_str) = account_id {
+    // [OPSEC] Wektor R & S: Ochrona Workspace Fingerprint przed wyciekiem krzyżowym
+    let mut derived_sid = session_id.unwrap_or("default").to_string();
+    if let Some(account_id_str) = account_id {
+        // Tworzy stałe per konto salt dla requestów
+        use std::hash::{Hash, Hasher};
+        use std::collections::hash_map::DefaultHasher;
+        let mut hasher = DefaultHasher::new();
+        account_id_str.hash(&mut hasher);
+        derived_sid.hash(&mut hasher);
+        derived_sid = format!("{:016x}", hasher.finish());
+        
+        inner_request["sessionId"] = json!(crate::proxy::common::session::derive_session_id(account_id_str));
+    } else {
         inner_request["sessionId"] = json!(uuid::Uuid::new_v4().to_string());
     }
 
-    let sid = session_id.unwrap_or("default");
     let final_request = json!({
         "project": project_id,
         // [CHANGED v4.1.24] Structured requestId to match official format
-        "requestId": format!("agent/vscode/{}/{}", &sid[..sid.len().min(8)], message_count), // [OPSEC] Wektor S
+        "requestId": format!("agent/vscode/{}/{}", &derived_sid[..derived_sid.len().min(8)], message_count), // [OPSEC] Wektor S
         "request": inner_request,
         "model": config.final_model,
         "userAgent": "vscode", // [OPSEC] Wektor S

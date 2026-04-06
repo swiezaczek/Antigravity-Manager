@@ -357,12 +357,46 @@ pub async fn start_oauth_flow(app_handle: Option<tauri::AppHandle>, oauth_client
     // Ensure URL + listener are ready (this way if the user authorizes first, it won't get stuck)
     let auth_url = ensure_oauth_flow_prepared(app_handle.clone(), oauth_client_key).await?;
 
-    if let Some(h) = app_handle {
-        // Open default browser
-        use tauri_plugin_opener::OpenerExt;
-        h.opener()
-            .open_url(&auth_url, None::<String>)
-            .map_err(|e| format!("failed_to_open_browser: {}", e))?;
+    // [Zero-Emission V3] OAuth Browser Isolation
+    let mut spawned = false;
+    let state_id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_micros().to_string();
+
+    if let Some(local_data) = dirs::data_local_dir() {
+        let app_dir = local_data.join("Antigravity-Manager").join("oauth_jars").join(state_id);
+        let path_arg = format!("--user-data-dir={}", app_dir.to_string_lossy());
+        
+        #[cfg(target_os = "windows")]
+        let browsers = vec!["msedge.exe", "chrome.exe"];
+        
+        #[cfg(target_os = "macos")]
+        let browsers = vec!["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"];
+        
+        #[cfg(target_os = "linux")]
+        let browsers = vec!["google-chrome", "microsoft-edge", "chromium-browser"];
+        
+        for browser in browsers {
+            if let Ok(mut child) = std::process::Command::new(browser)
+                .arg(&path_arg)
+                .arg("--no-first-run")
+                .arg("--new-window")
+                .arg(&auth_url)
+                .spawn() 
+            {
+                crate::modules::logger::log_info(&format!("[Zero-Emission] Spawned isolated OAuth browser: {}", browser));
+                spawned = true;
+                break;
+            }
+        }
+    }
+
+    if !spawned {
+        crate::modules::logger::log_warn("[Zero-Emission] Could not spawn isolated browser, falling back to system default.");
+        if let Some(h) = app_handle {
+            use tauri_plugin_opener::OpenerExt;
+            let _ = h.opener()
+                .open_url(&auth_url, None::<String>)
+                .map_err(|e| format!("failed_to_open_browser: {}", e));
+        }
     }
 
     // Take code_rx to wait for it

@@ -723,18 +723,26 @@ pub fn transform_openai_request(
         }
     }
 
-    // [ADDED v4.1.24] 注入稳定 sessionId 对齐官方规范
+    // [ADDED v4.1.24] 注入稳定 sessionId 对齐官方规范 & [OPSEC] Wektor R/S Hash
+    let mut derived_sid = session_id.to_string();
     if let Some(t) = token {
+        use std::hash::{Hash, Hasher};
+        use std::collections::hash_map::DefaultHasher;
+        let mut hasher = DefaultHasher::new();
+        t.account_id.hash(&mut hasher);
+        derived_sid.hash(&mut hasher);
+        derived_sid = format!("{:016x}", hasher.finish());
+
         inner_request["sessionId"] = json!(crate::proxy::common::session::derive_session_id(&t.account_id));
     }
 
     let final_body = json!({
         "project": project_id,
         // [CHANGED v4.1.24] Structured requestId: agent/<session>/<turn> to match official format
-        "requestId": format!("agent/antigravity/{}/{}", &session_id[..session_id.len().min(8)], message_count),
+        "requestId": format!("agent/vscode/{}/{}", &derived_sid[..derived_sid.len().min(8)], message_count), // [OPSEC] Wektor S
         "request": inner_request,
         "model": config.final_model,
-        "userAgent": "antigravity",
+        "userAgent": "vscode", // [OPSEC] Wektor S — must match official client identifier
         // [CHANGED v4.1.24] Use "agent" for all non-image requests (matches official client)
         "requestType": if config.request_type == "image_gen" { "image_gen" } else { "agent" }
     });

@@ -701,8 +701,37 @@ pub fn close_antigravity(#[allow(unused_variables)] timeout_secs: u64) -> Result
 }
 
 /// Start Antigravity
+}
+
+// [Zero-Emission V3] Process OS Env Spoofing
+fn apply_spoofed_env(cmd: &mut std::process::Command, account_id: Option<&str>) {
+    if let Some(id) = account_id {
+        use std::hash::{Hash, Hasher};
+        use std::collections::hash_map::DefaultHasher;
+        let mut hasher = DefaultHasher::new();
+        id.hash(&mut hasher);
+        let hash = hasher.finish();
+        
+        let username = format!("User_{:04X}", hash & 0xFFFF);
+        let computername = format!("DESKTOP-{:04X}", (hash >> 16) & 0xFFFF);
+        let userdomain = format!("WORKSPACE-{:04X}", (hash >> 32) & 0xFFFF);
+        
+        cmd.env("USERNAME", &username)
+           .env("COMPUTERNAME", &computername)
+           .env("USERDOMAIN", &userdomain)
+           .env("USER", &username)
+           .env("HOSTNAME", &computername);
+           
+        crate::modules::logger::log_info(&format!(
+            "[Zero-Emission] Mocked OS identity | USER: {} | HOST: {}",
+            username, computername
+        ));
+    }
+}
+
+/// Start Antigravity
 #[allow(unused_mut)]
-pub fn start_antigravity() -> Result<(), String> {
+pub fn start_antigravity(account_id: Option<&str>) -> Result<(), String> {
     crate::modules::logger::log_info("Starting Antigravity...");
 
     // Prefer manually specified path and args from configuration
@@ -748,6 +777,7 @@ pub fn start_antigravity() -> Result<(), String> {
                         }
                     }
 
+                    apply_spoofed_env(&mut cmd, account_id);
                     cmd.spawn().map_err(|e| format!("Startup failed (open): {}", e))?;
                 } else {
                     let mut cmd = Command::new(&path_str);
@@ -759,6 +789,7 @@ pub fn start_antigravity() -> Result<(), String> {
                         }
                     }
 
+                    apply_spoofed_env(&mut cmd, account_id);
                     cmd.spawn()
                         .map_err(|e| format!("Startup failed (direct): {}", e))?;
                 }
@@ -775,6 +806,7 @@ pub fn start_antigravity() -> Result<(), String> {
                     }
                 }
 
+                apply_spoofed_env(&mut cmd, account_id);
                 cmd.spawn().map_err(|e| format!("Startup failed: {}", e))?;
             }
 
@@ -804,6 +836,7 @@ pub fn start_antigravity() -> Result<(), String> {
             }
         }
 
+        apply_spoofed_env(&mut cmd, account_id);
         let output = cmd
             .output()
             .map_err(|e| format!("Unable to execute open command: {}", e))?;
@@ -838,6 +871,7 @@ pub fn start_antigravity() -> Result<(), String> {
                     }
                 }
                 
+                apply_spoofed_env(&mut cmd, account_id);
                 cmd.spawn().map_err(|e| format!("Startup failed: {}", e))?;
             } else {
                 return Err("Startup arguments configured but cannot find Antigravity executable path. Please set the executable path manually in Settings.".to_string());
@@ -848,6 +882,7 @@ pub fn start_antigravity() -> Result<(), String> {
             cmd.creation_flags_windows();
             cmd.args(["/C", "start", "antigravity://"]);
             
+            apply_spoofed_env(&mut cmd, account_id);
             let result = cmd.spawn();
             if result.is_err() {
                 return Err("Startup failed, please open Antigravity manually".to_string());
@@ -866,6 +901,7 @@ pub fn start_antigravity() -> Result<(), String> {
             }
         }
 
+        apply_spoofed_env(&mut cmd, account_id);
         cmd.spawn().map_err(|e| format!("Startup failed: {}", e))?;
     }
 

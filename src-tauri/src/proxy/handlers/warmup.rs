@@ -138,6 +138,7 @@ pub async fn handle_warmup(
             &project_id,
             false,
             None,
+            Some(account_id.as_str()),
             "warmup",
             None, // [NEW] No token for warmup
         ) {
@@ -185,7 +186,7 @@ pub async fn handle_warmup(
             })
         };
 
-        wrap_request(&base_request, &project_id, &req.model, None, Some(&session_id), None) // [FIX] Added None for token param
+        wrap_request(&base_request, &project_id, &req.model, Some(account_id.as_str()), Some(&session_id), None) // [FIX] Added None for token param
     };
 
     // ===== 步骤 3: 调用 UpstreamClient =====

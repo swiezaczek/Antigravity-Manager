@@ -15,7 +15,7 @@ pub static SHARED_STANDARD_CLIENT_LONG: Lazy<Client> = Lazy::new(|| create_stand
 fn create_standard_client(timeout_secs: u64) -> Client {
     let mut builder = Client::builder()
         // No .emulation() — pure native BoringSSL fingerprint (close to Node.js OpenSSL)
-        .http1_only() // [OPSEC] Force HTTP/1.1 to match MITM logs (Connection: close)
+        .http1_only() // [OPSEC] Force HTTP/1.1 to match Node.js gaxios (Connection: keep-alive)
         .timeout(std::time::Duration::from_secs(timeout_secs));
 
     if let Ok(config) = load_app_config() {

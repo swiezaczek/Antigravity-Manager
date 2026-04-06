@@ -651,14 +651,22 @@ pub fn transform_claude_request_in(
         }
     }
 
-    // [ADDED v4.1.24] 注入稳定 sessionId 对齐官方规范
+    // [ADDED v4.1.24] 注入稳定 sessionId 对齐官方规范 & [OPSEC] Wektor R/S Hash
+    let mut derived_sid = session_id.to_string();
     if let Some(account_id) = account_id {
+        use std::hash::{Hash, Hasher};
+        use std::collections::hash_map::DefaultHasher;
+        let mut hasher = DefaultHasher::new();
+        account_id.hash(&mut hasher);
+        derived_sid.hash(&mut hasher);
+        derived_sid = format!("{:016x}", hasher.finish());
+
         inner_request["sessionId"] = json!(crate::proxy::common::session::derive_session_id(account_id));
     }
 
     // 生成 requestId
     // [CHANGED v4.1.24] Structured requestId to match official format
-    let request_id = format!("agent/antigravity/{}/{}", &session_id[..session_id.len().min(8)], message_count);
+    let request_id = format!("agent/vscode/{}/{}", &derived_sid[..derived_sid.len().min(8)], message_count); // [OPSEC] Wektor S
 
     // 构建最终请求体
     let mut body = json!({
@@ -666,17 +674,14 @@ pub fn transform_claude_request_in(
         "requestId": request_id,
         "request": inner_request,
         "model": config.final_model,
-        "userAgent": "antigravity",
+        "userAgent": "vscode", // [OPSEC] Wektor S — must match official client identifier
         // [CHANGED v4.1.24] Use "agent" for all non-image requests
         "requestType": if config.request_type == "image_gen" { "image_gen" } else { "agent" },
     });
 
-    // 如果提供了 metadata.user_id，则复用为 sessionId
-    if let Some(metadata) = &claude_req.metadata {
-        if let Some(user_id) = &metadata.user_id {
-            body["request"]["sessionId"] = json!(user_id);
-        }
-    }
+    // [OPSEC] Wektor R: Usunięto nadpisywanie sessionId surowym metadata.user_id
+    // Poprzednio to cofało hashowanie sessionId, pozwalając na linkowanie kont.
+    // SessionId jest już ustawiony powyżej przez derive_session_id(account_id).
 
     // [FIX #593] 最后一道防线: 递归深度清理所有 cache_control 字段
     // 确保发送给 Antigravity 的请求中不包含任何 cache_control
