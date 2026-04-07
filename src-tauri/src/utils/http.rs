@@ -72,7 +72,7 @@ pub fn google_api_headers(access_token: &str) -> HeaderMap {
         HeaderName::from_static("user-agent"),
         HeaderValue::from_str(ua).unwrap_or_else(|_| HeaderValue::from_static("google-api-nodejs-client/10.3.0")),
     ); // [OPSEC] Wektor T Fallback CleanUp
-    h.insert(HeaderName::from_static("x-goog-api-client"), HeaderValue::from_static("gl-node/22.21.1 auth/10.3.0"));
+    h.insert(HeaderName::from_static("x-goog-api-client"), HeaderValue::from_static("gl-node/22.21.1"));
     h.insert(HeaderName::from_static("accept-encoding"), HeaderValue::from_static("gzip, deflate, br"));
     h.insert(HeaderName::from_static("connection"), HeaderValue::from_static("keep-alive")); // [OPSEC] Wektor O: keep-alive sync
     h
@@ -90,7 +90,7 @@ pub fn google_oauth_headers() -> HeaderMap {
         HeaderName::from_static("user-agent"),
         HeaderValue::from_str(ua).unwrap_or_else(|_| HeaderValue::from_static("google-api-nodejs-client/10.3.0")),
     ); // [OPSEC] Wektor T Fallback CleanUp
-    h.insert(HeaderName::from_static("x-goog-api-client"), HeaderValue::from_static("gl-node/22.21.1 auth/10.3.0")); // [OPSEC] Wektor O: auth sync
+    h.insert(HeaderName::from_static("x-goog-api-client"), HeaderValue::from_static("gl-node/22.21.1")); // [OPSEC] Wektor O: auth sync
     h.insert(HeaderName::from_static("connection"), HeaderValue::from_static("keep-alive")); // [OPSEC] Wektor O: keep-alive sync
     h
 }
@@ -110,7 +110,7 @@ pub fn google_get_headers(access_token: &str) -> HeaderMap {
         HeaderName::from_static("user-agent"),
         HeaderValue::from_str(ua).unwrap_or_else(|_| HeaderValue::from_static("google-api-nodejs-client/10.3.0")),
     ); // [OPSEC] Wektor T Fallback CleanUp
-    h.insert(HeaderName::from_static("x-goog-api-client"), HeaderValue::from_static("gl-node/22.21.1 auth/10.3.0")); // [OPSEC] Wektor O: api sync
+    h.insert(HeaderName::from_static("x-goog-api-client"), HeaderValue::from_static("gl-node/22.21.1")); // [OPSEC] Wektor O: api sync
     h.insert(HeaderName::from_static("accept-encoding"), HeaderValue::from_static("gzip, deflate, br"));
     h.insert(HeaderName::from_static("connection"), HeaderValue::from_static("keep-alive")); // [OPSEC] Wektor O: keep-alive sync
     h

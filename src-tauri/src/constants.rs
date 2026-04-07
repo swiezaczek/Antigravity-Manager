@@ -197,7 +197,7 @@ pub static NATIVE_OAUTH_USER_AGENT: LazyLock<String> = LazyLock::new(|| {
         "linux" => "linux/amd64",
         _ => "linux/amd64",
     };
-    format!("gl-node/22.21.1 {} google-api-nodejs-client/10.3.0", platform_info) // [OPSEC] Wektor T User_Agent_Sync
+    format!("antigravity/1.21.9 {} google-api-nodejs-client/10.3.0", platform_info) // [OPSEC] Wektor T User_Agent_Sync
 });
 
 /// Current resolved Antigravity version (e.g., "4.1.31")
@@ -216,7 +216,7 @@ pub fn get_default_user_agent() -> String {
         "linux" => "linux/amd64",
         _ => "linux/amd64",
     };
-    format!("gl-node/22.21.1 {} google-api-nodejs-client/10.3.0", platform_info) // [OPSEC] Wektor T2
+    format!("antigravity/1.21.9 {} google-api-nodejs-client/10.3.0", platform_info) // [OPSEC] Wektor T2
 }
 
 /// Global Session ID (generated once per app launch)
@@ -236,7 +236,7 @@ pub static USER_AGENT: LazyLock<String> = LazyLock::new(|| {
         _ => "linux/amd64",
     };
 
-    let ua = format!("gl-node/22.21.1 {} google-api-nodejs-client/10.3.0", platform_info); // [OPSEC] Wektor T User_Agent_Sync
+    let ua = format!("antigravity/1.21.9 {} google-api-nodejs-client/10.3.0", platform_info); // [OPSEC] Wektor T User_Agent_Sync
     ua
 });
 
