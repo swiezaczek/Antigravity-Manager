@@ -166,7 +166,66 @@ async fn fetch_project_id(access_token: &str, email: &str, account_id: Option<&s
                         ));
                     }
                     
-                    return (project_id, subscription_tier);
+                    let mut tier_id_for_onboard = data.paid_tier.as_ref().and_then(|t| t.id.clone())
+                        .or_else(|| data.current_tier.as_ref().and_then(|t| t.id.clone()))
+                        .unwrap_or_else(|| "free-tier".to_string());
+
+                    // If we have a project ID, we're good
+                    if let Some(pid) = project_id {
+                        return (Some(pid), subscription_tier);
+                    }
+                    
+                    // IF NO PROJECT ID WAS FOUND -> The account is NOT onboarded yet!
+                    // We must fire `onboardUser` using the identified tier, then retry `loadCodeAssist`.
+                    crate::modules::logger::log_info(&format!(
+                        "⚠️ [{}] No cloud project assigned. Triggering Auto-Onboarding (Tier: {})...", email, tier_id_for_onboard
+                    ));
+                    
+                    let onboard_meta = json!({
+                        "tier_id": tier_id_for_onboard,
+                        "metadata": {
+                            "ide_type": "ANTIGRAVITY",
+                            "ide_version": "1.21.9",
+                            "ide_name": "antigravity"
+                        }
+                    });
+                    
+                    let onboard_res = client
+                        .post("https://daily-cloudcode-pa.googleapis.com/v1internal:onboardUser")
+                        .headers(crate::utils::http::google_api_headers(access_token))
+                        .json(&onboard_meta)
+                        .send()
+                        .await;
+                        
+                    if let Ok(onb) = onboard_res {
+                        if onb.status().is_success() {
+                            crate::modules::logger::log_info(&format!("✅ [{}] Auto-Onboarding Successful! Retrying loadCodeAssist...", email));
+                            
+                            // Retry loadCodeAssist ONCE
+                            let retry_res = client
+                                .post(format!("{}/v1internal:loadCodeAssist", CLOUD_CODE_BASE_URL))
+                                .headers(crate::utils::http::google_api_headers(access_token))
+                                .json(&meta)
+                                .send()
+                                .await;
+                                
+                            if let Ok(rr) = retry_res {
+                                if rr.status().is_success() {
+                                    if let Ok(r_data) = rr.json::<LoadProjectResponse>().await {
+                                        if let Some(new_pid) = r_data.project_id {
+                                            crate::modules::logger::log_info(&format!("🎯 [{}] New project obtained: {}", email, new_pid));
+                                            return (Some(new_pid), subscription_tier);
+                                        }
+                                    }
+                                }
+                            }
+                            crate::modules::logger::log_warn(&format!("⚠️ [{}] Onboarding succeeded but retry failed to return project_id", email));
+                        } else {
+                            crate::modules::logger::log_warn(&format!("❌ [{}] Auto-Onboarding Failed with status {}", email, onb.status()));
+                        }
+                    }
+                    
+                    return (None, subscription_tier);
                 }
             } else {
                 let status = res.status();
