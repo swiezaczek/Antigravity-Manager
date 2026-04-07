@@ -12,11 +12,11 @@ pub async fn fetch_project_id(access_token: &str) -> Result<String, String> {
         }
     });
     
-    let client = crate::utils::http::get_client();
+    let client = crate::utils::http::get_standard_client();
     let response = client
         .post(url)
         .bearer_auth(access_token)
-        .header("User-Agent", crate::constants::USER_AGENT.as_str())
+        .header("User-Agent", crate::constants::NATIVE_OAUTH_USER_AGENT.as_str())
         .header("Content-Type", "application/json")
         .json(&request_body)
         .send()
