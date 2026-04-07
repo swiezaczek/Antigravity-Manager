@@ -8,11 +8,9 @@ pub async fn fetch_project_id(access_token: &str) -> Result<String, String> {
     
     let request_body = serde_json::json!({
         "metadata": {
-            "ide_type": "VSCODE",
-            "ide_version": "1.97.2",
-            "ide_name": "vscode"
+            "ideType": "ANTIGRAVITY"
         }
-    }); // [OPSEC] Wektor S
+    }); // [OPSEC] Synchronized with Draculabo reference
     
     // Używamy natywnego klienta (bez emulacji Chrome JA3) by oddać footprint NodeJS
     let client = crate::utils::http::get_standard_client();

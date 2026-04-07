@@ -118,7 +118,7 @@ const CLOUD_CODE_BASE_URL: &str = "https://cloudcode-pa.googleapis.com"; // [OPS
 /// Fetch project ID and subscription tier, running the FULL MITM Warmup Flow
 async fn fetch_project_id(access_token: &str, email: &str, account_id: Option<&str>) -> (Option<String>, Option<String>) {
     let client = create_standard_client(account_id).await;
-    let meta = json!({"metadata": {"ide_type": "ANTIGRAVITY", "ide_version": "1.21.9", "ide_name": "antigravity"}}); // [OPSEC] Wektor S & C
+    let meta = json!({"metadata": {"ideType": "ANTIGRAVITY"}}); // [OPSEC] Synchronized with Draculabo reference
 
     // 1. Krok pierwszy: PROD loadCodeAssist (wyciąganie struktury)
     let res = client
@@ -185,69 +185,8 @@ async fn fetch_project_id(access_token: &str, email: &str, account_id: Option<&s
         crate::modules::logger::log_info(&format!("🎯 [{}] Cloud project assigned: {}", email, safe_pid));
     }
 
-    // Pętla Onboardingu z MITM: Przechodzimy na DAILY niezależnie od tego, czy mamy projekt,
-    // aby nawiązać tam poprawną sesję!
-    
-    let payload = json!({ "project": safe_pid });
-    
-    // 2. Krok drugi: fetchUserInfo na DAILY
-    crate::modules::logger::log_info(&format!("🚀 [{}] Starting DAILY environment session warmup...", email));
-    let _ = client
-        .post("https://daily-cloudcode-pa.googleapis.com/v1internal:fetchUserInfo")
-        .headers(crate::utils::http::google_api_headers(access_token))
-        .json(&payload)
-        .send()
-        .await;
-
-    // 3. Krok trzeci: onboardUser na DAILY
-    let onboard_meta = json!({
-        "tier_id": tier_id_for_onboard,
-        "metadata": {
-            "ide_type": "ANTIGRAVITY",
-            "ide_version": "1.21.9",
-            "ide_name": "antigravity"
-        }
-    });
-    
-    let _ = client
-        .post("https://daily-cloudcode-pa.googleapis.com/v1internal:onboardUser")
-        .headers(crate::utils::http::google_api_headers(access_token))
-        .json(&onboard_meta)
-        .send()
-        .await;
-
-    // 4. Krok czwarty: loadCodeAssist na DAILY (odświeżenie przydziału w nowym środowisku)
-    let retry_res = client
-        .post("https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist")
-        .headers(crate::utils::http::google_api_headers(access_token))
-        .json(&meta)
-        .send()
-        .await;
-        
-    if let Ok(rr) = retry_res {
-        if rr.status().is_success() {
-            if let Ok(r_data) = rr.json::<LoadProjectResponse>().await {
-                if let Some(new_pid) = r_data.project_id {
-                    // Update project_id jeśli zmieniono
-                    if project_id.is_none() || project_id.as_ref() != Some(&new_pid) {
-                        crate::modules::logger::log_info(&format!("🎯 [{}] DAILY project synced: {}", email, new_pid));
-                        project_id = Some(new_pid.clone());
-                    }
-                }
-            }
-        }
-    }
-
-    // 5. Krok piąty: fetchUserInfo na DAILY (potwierdzenie gotowości do fetchAvailableModels)
-    let final_payload = json!({ "project": project_id.clone().unwrap_or(safe_pid) });
-    let _ = client
-        .post("https://daily-cloudcode-pa.googleapis.com/v1internal:fetchUserInfo")
-        .headers(crate::utils::http::google_api_headers(access_token))
-        .json(&final_payload)
-        .send()
-        .await;
-
-    crate::modules::logger::log_info(&format!("✅ [{}] Session formally established in DAILY environment", email));
+    // Lightweight session init — matching Draculabo reference (no aggressive DAILY onboarding)
+    crate::modules::logger::log_info(&format!("✅ [{}] Project resolved, session ready", email));
 
     (project_id, subscription_tier)
 }
