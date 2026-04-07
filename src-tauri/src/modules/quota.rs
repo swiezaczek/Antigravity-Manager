@@ -4,10 +4,10 @@ use serde_json::json;
 use crate::models::QuotaData;
 use crate::modules::config;
 
-// Quota API endpoints (fallback order: Prod → Daily)
+// Quota API endpoints (fallback order: Daily → Prod)
 const QUOTA_API_ENDPOINTS: [&str; 2] = [
-    "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
     "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
+    "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
 ];
 
 /// Critical retry threshold: considered near recovery when quota reaches 95%
@@ -173,6 +173,7 @@ async fn fetch_project_id(access_token: &str, email: &str, account_id: Option<&s
                     // If we have a project ID, we're good
                     if let Some(pid) = project_id {
                         if !pid.trim().is_empty() {
+                            crate::modules::logger::log_info(&format!("🎯 [{}] Cloud project assigned: {}", email, pid));
                             return (Some(pid), subscription_tier);
                         }
                     }
@@ -203,9 +204,9 @@ async fn fetch_project_id(access_token: &str, email: &str, account_id: Option<&s
                         if onb.status().is_success() {
                             crate::modules::logger::log_info(&format!("✅ [{}] Auto-Onboarding Successful! Retrying loadCodeAssist...", email));
                             
-                            // Retry loadCodeAssist ONCE
+                            // Retry loadCodeAssist ONCE on DAILY (where the project was just created!)
                             let retry_res = client
-                                .post(format!("{}/v1internal:loadCodeAssist", CLOUD_CODE_BASE_URL))
+                                .post("https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist")
                                 .headers(crate::utils::http::google_api_headers(access_token))
                                 .json(&meta)
                                 .send()
