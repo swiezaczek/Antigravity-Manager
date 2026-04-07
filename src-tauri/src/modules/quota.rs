@@ -169,8 +169,10 @@ async fn fetch_project_id(access_token: &str, email: &str, account_id: Option<&s
                     return (project_id, subscription_tier);
                 }
             } else {
+                let status = res.status();
+                let text = res.text().await.unwrap_or_else(|_| "No body".to_string());
                 crate::modules::logger::log_warn(&format!(
-                    "⚠️  [{}] loadCodeAssist failed: Status: {}", email, res.status()
+                    "⚠️  [{}] loadCodeAssist failed: Status: {}. DETAILS: {}", email, status, text
                 ));
             }
         }
@@ -240,8 +242,9 @@ pub async fn fetch_quota_with_cache(
                     
                     // ✅ Special handling for 403 Forbidden - return directly, no retry
                     if status == rquest::StatusCode::FORBIDDEN {
+                        let text = response.text().await.unwrap_or_else(|_| "No body".to_string());
                         crate::modules::logger::log_warn(&format!(
-                            "Account unauthorized (403 Forbidden), marking as forbidden"
+                            "Account unauthorized (403 Forbidden). DETAILS: {}", text
                         ));
                         let mut q = QuotaData::new();
                         q.is_forbidden = true;

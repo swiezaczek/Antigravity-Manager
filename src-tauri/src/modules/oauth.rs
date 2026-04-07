@@ -334,6 +334,9 @@ pub fn get_auth_url_with_client(
     let scopes = vec![
         "https://www.googleapis.com/auth/cloud-platform",
         "https://www.googleapis.com/auth/userinfo.email",
+        "https://www.googleapis.com/auth/userinfo.profile",
+        "https://www.googleapis.com/auth/cloud-platform.cclog",
+        "https://www.googleapis.com/auth/cloud-platform.experimentsandconfigs",
     ]
     .join(" ");
 
