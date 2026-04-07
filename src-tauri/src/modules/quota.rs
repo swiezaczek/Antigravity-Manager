@@ -172,7 +172,9 @@ async fn fetch_project_id(access_token: &str, email: &str, account_id: Option<&s
 
                     // If we have a project ID, we're good
                     if let Some(pid) = project_id {
-                        return (Some(pid), subscription_tier);
+                        if !pid.trim().is_empty() {
+                            return (Some(pid), subscription_tier);
+                        }
                     }
                     
                     // IF NO PROJECT ID WAS FOUND -> The account is NOT onboarded yet!
