@@ -3,20 +3,21 @@ use serde_json::Value;
 /// 使用 Antigravity 的 loadCodeAssist API 获取 project_id
 /// 这是获取 cloudaicompanionProject 的正确方式
 pub async fn fetch_project_id(access_token: &str) -> Result<String, String> {
-    // Używamy natywnego środowiska produkcyjnego, by nie obnażać Managera w logach Google
-    let url = "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist";
+    // 使用 Sandbox 环境，避免 Prod 环境的 429 错误
+    let url = "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:loadCodeAssist";
     
     let request_body = serde_json::json!({
         "metadata": {
             "ideType": "ANTIGRAVITY"
         }
-    }); // [OPSEC] Synchronized with Draculabo reference
+    });
     
-    // Używamy natywnego klienta (bez emulacji Chrome JA3) by oddać footprint NodeJS
-    let client = crate::utils::http::get_standard_client();
+    let client = crate::utils::http::get_client();
     let response = client
         .post(url)
-        .headers(crate::utils::http::google_api_headers(access_token))
+        .bearer_auth(access_token)
+        .header("User-Agent", crate::constants::USER_AGENT.as_str())
+        .header("Content-Type", "application/json")
         .json(&request_body)
         .send()
         .await
