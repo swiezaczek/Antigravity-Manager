@@ -118,7 +118,7 @@ const CLOUD_CODE_BASE_URL: &str = "https://cloudcode-pa.googleapis.com"; // [OPS
 /// Fetch project ID and subscription tier
 async fn fetch_project_id(access_token: &str, email: &str, account_id: Option<&str>) -> (Option<String>, Option<String>) {
     let client = create_standard_client(account_id).await;
-    let meta = json!({"metadata": {"ide_type": "VSCODE", "ide_version": "1.97.2", "ide_name": "vscode"}}); // [OPSEC] Wektor S & C
+    let meta = json!({"metadata": {"ide_type": "ANTIGRAVITY", "ide_version": "1.21.9", "ide_name": "antigravity"}}); // [OPSEC] Wektor S & C
 
     let res = client
         .post(format!("{}/v1internal:loadCodeAssist", CLOUD_CODE_BASE_URL))
@@ -279,7 +279,7 @@ pub async fn fetch_quota_with_cache(
     
     // [OPSEC] MITM Mimic - Execute fetchUserInfo before fetchAvailableModels
     let _ = client
-        .post(format!("{}/v1internal:fetchUserInfo", CLOUD_CODE_BASE_URL))
+        .post("https://daily-cloudcode-pa.googleapis.com/v1internal:fetchUserInfo")
         .headers(crate::utils::http::google_api_headers(access_token))
         .json(&payload)
         .send()

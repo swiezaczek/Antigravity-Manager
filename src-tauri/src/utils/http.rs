@@ -62,18 +62,18 @@ pub fn google_api_headers(access_token: &str) -> HeaderMap {
     let ua = crate::constants::NATIVE_OAUTH_USER_AGENT.as_str();
     let mut h = HeaderMap::with_capacity(7);
     h.insert(HeaderName::from_static("accept"), HeaderValue::from_static("*/*"));
-    h.insert(HeaderName::from_static("content-type"), HeaderValue::from_static("application/json"));
+    h.insert(HeaderName::from_static("accept-encoding"), HeaderValue::from_static("gzip, deflate, br"));
     h.insert(
         HeaderName::from_static("authorization"),
         HeaderValue::from_str(&format!("Bearer {}", access_token))
             .expect("invalid access token for header"),
     );
+    h.insert(HeaderName::from_static("content-type"), HeaderValue::from_static("application/json"));
     h.insert(
         HeaderName::from_static("user-agent"),
         HeaderValue::from_str(ua).unwrap_or_else(|_| HeaderValue::from_static("google-api-nodejs-client/10.3.0")),
     ); // [OPSEC] Wektor T Fallback CleanUp
     h.insert(HeaderName::from_static("x-goog-api-client"), HeaderValue::from_static("gl-node/22.21.1"));
-    h.insert(HeaderName::from_static("accept-encoding"), HeaderValue::from_static("gzip, deflate, br"));
     h.insert(HeaderName::from_static("connection"), HeaderValue::from_static("keep-alive")); // [OPSEC] Wektor O: keep-alive sync
     h
 }
