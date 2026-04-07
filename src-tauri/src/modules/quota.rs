@@ -302,16 +302,25 @@ pub async fn fetch_quota_with_cache(
                 if let Err(_) = response.error_for_status_ref() {
                     let status = response.status();
                     
-                    // ✅ Special handling for 403 Forbidden - return directly, no retry
+                    // ✅ Allow fallback on 403 Forbidden because projects might be isolated to specific environments (Daily vs Prod)
                     if status == rquest::StatusCode::FORBIDDEN {
                         let text = response.text().await.unwrap_or_else(|_| "No body".to_string());
                         crate::modules::logger::log_warn(&format!(
-                            "Account unauthorized (403 Forbidden). DETAILS: {}", text
+                            "Account unauthorized (403 Forbidden) on {}. DETAILS: {}", ep_url, text
                         ));
-                        let mut q = QuotaData::new();
-                        q.is_forbidden = true;
-                        q.subscription_tier = subscription_tier.clone();
-                        return Ok((q, project_id.clone()));
+                        
+                        // Treat it as an error to fallback!
+                        if has_next {
+                            crate::modules::logger::log_warn(&format!("Environment mismatch possible, falling back to next endpoint..."));
+                            last_error = Some(AppError::Unknown(format!("HTTP {} - {}", status, text)));
+                            continue;
+                        } else {
+                            // If it's the last one, return the forbidden data
+                            let mut q = QuotaData::new();
+                            q.is_forbidden = true;
+                            q.subscription_tier = subscription_tier.clone();
+                            return Ok((q, project_id.clone()));
+                        }
                     }
                     
                     let text = response.text().await.unwrap_or_default();
