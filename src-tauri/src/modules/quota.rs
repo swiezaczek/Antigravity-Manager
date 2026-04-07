@@ -115,135 +115,141 @@ const CLOUD_CODE_BASE_URL: &str = "https://cloudcode-pa.googleapis.com"; // [OPS
 
 
 
-/// Fetch project ID and subscription tier
+/// Fetch project ID and subscription tier, running the FULL MITM Warmup Flow
 async fn fetch_project_id(access_token: &str, email: &str, account_id: Option<&str>) -> (Option<String>, Option<String>) {
     let client = create_standard_client(account_id).await;
     let meta = json!({"metadata": {"ide_type": "ANTIGRAVITY", "ide_version": "1.21.9", "ide_name": "antigravity"}}); // [OPSEC] Wektor S & C
 
+    // 1. Krok pierwszy: PROD loadCodeAssist (wyciąganie struktury)
     let res = client
-        .post(format!("{}/v1internal:loadCodeAssist", CLOUD_CODE_BASE_URL))
+        .post(format!("{}/v1internal:loadCodeAssist", "https://cloudcode-pa.googleapis.com")) // W MITM pierwszy jest zawsze na PROD
         .headers(crate::utils::http::google_api_headers(access_token))
         .json(&meta)
         .send()
         .await;
 
+    let mut project_id = None;
+    let mut subscription_tier = None;
+    let mut tier_id_for_onboard = "free-tier".to_string();
+
     match res {
-        Ok(res) => {
-            if res.status().is_success() {
-                if let Ok(data) = res.json::<LoadProjectResponse>().await {
-                    let project_id = data.project_id.clone();
+        Ok(response) => {
+            if response.status().is_success() {
+                if let Ok(data) = response.json::<LoadProjectResponse>().await {
+                    project_id = data.project_id.clone();
                     
-                    // Core logic: Multi-level fallback for tier extraction
-                    // 1. Paid Tier (Google One AI Premium etc.)
-                    // 2. Current Tier (If not ineligible)
-                    // 3. Allowed Tiers (Restricted/Default proxy access)
-                    let mut subscription_tier = data.paid_tier.as_ref().and_then(|t| t.name.clone())
+                    let mut tier = data.paid_tier.as_ref().and_then(|t| t.name.clone())
                         .or_else(|| data.paid_tier.as_ref().and_then(|t| t.id.clone()));
                         
                     let is_ineligible = data.ineligible_tiers.is_some() && !data.ineligible_tiers.as_ref().unwrap().is_empty();
                     
-                    if subscription_tier.is_none() {
+                    if tier.is_none() {
                         if !is_ineligible {
-                            subscription_tier = data.current_tier.as_ref().and_then(|t| t.name.clone())
+                            tier = data.current_tier.as_ref().and_then(|t| t.name.clone())
                                 .or_else(|| data.current_tier.as_ref().and_then(|t| t.id.clone()));
                         } else {
-                            // If account is marked as INELIGIBLE, drop to allowedTiers and extract default
                             if let Some(mut allowed) = data.allowed_tiers {
                                 if let Some(default_tier) = allowed.iter_mut().find(|t| t.is_default == Some(true)) {
                                     if let Some(name) = &default_tier.name {
-                                        subscription_tier = Some(format!("{} (Restricted)", name));
+                                        tier = Some(format!("{} (Restricted)", name));
                                     } else if let Some(id) = &default_tier.id {
-                                        subscription_tier = Some(format!("{} (Restricted)", id));
+                                        tier = Some(format!("{} (Restricted)", id));
                                     }
                                 }
                             }
                         }
                     }
                     
-                    if let Some(ref tier) = subscription_tier {
+                    if let Some(ref t) = tier {
                         crate::modules::logger::log_info(&format!(
-                            "📊 [{}] Subscription identified successfully: {}", email, tier
+                            "📊 [{}] Subscription identified successfully: {}", email, t
                         ));
                     }
                     
-                    let mut tier_id_for_onboard = data.paid_tier.as_ref().and_then(|t| t.id.clone())
+                    tier_id_for_onboard = data.paid_tier.as_ref().and_then(|t| t.id.clone())
                         .or_else(|| data.current_tier.as_ref().and_then(|t| t.id.clone()))
                         .unwrap_or_else(|| "free-tier".to_string());
-
-                    // If we have a project ID, we're good
-                    if let Some(pid) = project_id {
-                        if !pid.trim().is_empty() {
-                            crate::modules::logger::log_info(&format!("🎯 [{}] Cloud project assigned: {}", email, pid));
-                            return (Some(pid), subscription_tier);
-                        }
-                    }
-                    
-                    // IF NO PROJECT ID WAS FOUND -> The account is NOT onboarded yet!
-                    // We must fire `onboardUser` using the identified tier, then retry `loadCodeAssist`.
-                    crate::modules::logger::log_info(&format!(
-                        "⚠️ [{}] No cloud project assigned. Triggering Auto-Onboarding (Tier: {})...", email, tier_id_for_onboard
-                    ));
-                    
-                    let onboard_meta = json!({
-                        "tier_id": tier_id_for_onboard,
-                        "metadata": {
-                            "ide_type": "ANTIGRAVITY",
-                            "ide_version": "1.21.9",
-                            "ide_name": "antigravity"
-                        }
-                    });
-                    
-                    let onboard_res = client
-                        .post("https://daily-cloudcode-pa.googleapis.com/v1internal:onboardUser")
-                        .headers(crate::utils::http::google_api_headers(access_token))
-                        .json(&onboard_meta)
-                        .send()
-                        .await;
                         
-                    if let Ok(onb) = onboard_res {
-                        if onb.status().is_success() {
-                            crate::modules::logger::log_info(&format!("✅ [{}] Auto-Onboarding Successful! Retrying loadCodeAssist...", email));
-                            
-                            // Retry loadCodeAssist ONCE on DAILY (where the project was just created!)
-                            let retry_res = client
-                                .post("https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist")
-                                .headers(crate::utils::http::google_api_headers(access_token))
-                                .json(&meta)
-                                .send()
-                                .await;
-                                
-                            if let Ok(rr) = retry_res {
-                                if rr.status().is_success() {
-                                    if let Ok(r_data) = rr.json::<LoadProjectResponse>().await {
-                                        if let Some(new_pid) = r_data.project_id {
-                                            crate::modules::logger::log_info(&format!("🎯 [{}] New project obtained: {}", email, new_pid));
-                                            return (Some(new_pid), subscription_tier);
-                                        }
-                                    }
-                                }
-                            }
-                            crate::modules::logger::log_warn(&format!("⚠️ [{}] Onboarding succeeded but retry failed to return project_id", email));
-                        } else {
-                            crate::modules::logger::log_warn(&format!("❌ [{}] Auto-Onboarding Failed with status {}", email, onb.status()));
-                        }
-                    }
-                    
-                    return (None, subscription_tier);
+                    subscription_tier = tier;
                 }
             } else {
-                let status = res.status();
-                let text = res.text().await.unwrap_or_else(|_| "No body".to_string());
-                crate::modules::logger::log_warn(&format!(
-                    "⚠️  [{}] loadCodeAssist failed: Status: {}. DETAILS: {}", email, status, text
-                ));
+                crate::modules::logger::log_warn(&format!("⚠️ [{}] PROD loadCodeAssist failed: {}", email, response.status()));
             }
         }
-        Err(e) => {
-            crate::modules::logger::log_error(&format!("❌ [{}] loadCodeAssist network error: {}", email, e));
+        Err(e) => crate::modules::logger::log_error(&format!("❌ [{}] PROD loadCodeAssist network error: {}", email, e)),
+    }
+
+    // Ustawiamy fallback project jeśli nie ma
+    let safe_pid = project_id.clone().unwrap_or_else(|| "advance-fold-f0tq9".to_string());
+    if project_id.is_some() {
+        crate::modules::logger::log_info(&format!("🎯 [{}] Cloud project assigned: {}", email, safe_pid));
+    }
+
+    // Pętla Onboardingu z MITM: Przechodzimy na DAILY niezależnie od tego, czy mamy projekt,
+    // aby nawiązać tam poprawną sesję!
+    
+    let payload = json!({ "project": safe_pid });
+    
+    // 2. Krok drugi: fetchUserInfo na DAILY
+    crate::modules::logger::log_info(&format!("🚀 [{}] Starting DAILY environment session warmup...", email));
+    let _ = client
+        .post("https://daily-cloudcode-pa.googleapis.com/v1internal:fetchUserInfo")
+        .headers(crate::utils::http::google_api_headers(access_token))
+        .json(&payload)
+        .send()
+        .await;
+
+    // 3. Krok trzeci: onboardUser na DAILY
+    let onboard_meta = json!({
+        "tier_id": tier_id_for_onboard,
+        "metadata": {
+            "ide_type": "ANTIGRAVITY",
+            "ide_version": "1.21.9",
+            "ide_name": "antigravity"
+        }
+    });
+    
+    let _ = client
+        .post("https://daily-cloudcode-pa.googleapis.com/v1internal:onboardUser")
+        .headers(crate::utils::http::google_api_headers(access_token))
+        .json(&onboard_meta)
+        .send()
+        .await;
+
+    // 4. Krok czwarty: loadCodeAssist na DAILY (odświeżenie przydziału w nowym środowisku)
+    let retry_res = client
+        .post("https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist")
+        .headers(crate::utils::http::google_api_headers(access_token))
+        .json(&meta)
+        .send()
+        .await;
+        
+    if let Ok(rr) = retry_res {
+        if rr.status().is_success() {
+            if let Ok(r_data) = rr.json::<LoadProjectResponse>().await {
+                if let Some(new_pid) = r_data.project_id {
+                    // Update project_id jeśli zmieniono
+                    if project_id.is_none() || project_id.as_ref() != Some(&new_pid) {
+                        crate::modules::logger::log_info(&format!("🎯 [{}] DAILY project synced: {}", email, new_pid));
+                        project_id = Some(new_pid.clone());
+                    }
+                }
+            }
         }
     }
-    
-    (None, None)
+
+    // 5. Krok piąty: fetchUserInfo na DAILY (potwierdzenie gotowości do fetchAvailableModels)
+    let final_payload = json!({ "project": project_id.clone().unwrap_or(safe_pid) });
+    let _ = client
+        .post("https://daily-cloudcode-pa.googleapis.com/v1internal:fetchUserInfo")
+        .headers(crate::utils::http::google_api_headers(access_token))
+        .json(&final_payload)
+        .send()
+        .await;
+
+    crate::modules::logger::log_info(&format!("✅ [{}] Session formally established in DAILY environment", email));
+
+    (project_id, subscription_tier)
 }
 
 /// Unified entry point for fetching account quota
@@ -276,14 +282,7 @@ pub async fn fetch_quota_with_cache(
     } else {
         json!({}) // Empty payload fallback
     };
-    
-    // [OPSEC] MITM Mimic - Execute fetchUserInfo before fetchAvailableModels
-    let _ = client
-        .post("https://daily-cloudcode-pa.googleapis.com/v1internal:fetchUserInfo")
-        .headers(crate::utils::http::google_api_headers(access_token))
-        .json(&payload)
-        .send()
-        .await;
+
 
     let mut last_error: Option<AppError> = None;
 
