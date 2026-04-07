@@ -362,7 +362,12 @@ pub async fn start_oauth_flow(app_handle: Option<tauri::AppHandle>, oauth_client
     let state_id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_micros().to_string();
 
     if let Some(local_data) = dirs::data_local_dir() {
-        let app_dir = local_data.join("Antigravity-Manager").join("oauth_jars").join(state_id);
+        let app_dir = local_data.join("Antigravity-Manager").join("oauth_jars").join(&state_id);
+        
+        // [CRITICAL FIX] Jeśli Chromium nie znajdzie fizycznie istniejącego folderu nadrzędnego dla `--user-data-dir`,
+        // zignoruje flagę profilu i po cichu odpali nową kartę w aktualnie otwartym oknie domyślnym ze starymi kontami!
+        std::fs::create_dir_all(&app_dir).ok();
+
         let path_arg = format!("--user-data-dir={}", app_dir.to_string_lossy());
         
         #[cfg(target_os = "windows")]
