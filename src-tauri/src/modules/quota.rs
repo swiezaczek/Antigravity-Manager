@@ -339,7 +339,7 @@ pub async fn fetch_quota_with_cache(
                             let reset_time = quota_info.reset_time.clone().unwrap_or_default();
                             
                             // Zachowujemy tylko sensowne
-                            if name.starts_with("gemini") || name.starts_with("claude") || name.starts_with("gpt") || name.starts_with("image") || name.starts_with("imagen") {
+                            if name.contains("gemini") || name.contains("claude") || name.contains("gpt") || name.contains("image") || name.contains("imagen") {
                                 let model_quota = crate::models::quota::ModelQuota {
                                     name,
                                     percentage,
