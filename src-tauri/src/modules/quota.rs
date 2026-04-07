@@ -4,8 +4,9 @@ use serde_json::json;
 use crate::models::QuotaData;
 use crate::modules::config;
 
-// Quota API endpoints (fallback order: Daily → Prod)
-const QUOTA_API_ENDPOINTS: [&str; 2] = [
+// Quota API endpoints (fallback order: Sandbox → Daily → Prod)
+const QUOTA_API_ENDPOINTS: [&str; 3] = [
+    "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:fetchAvailableModels",
     "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
     "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
 ];
@@ -110,7 +111,7 @@ async fn create_long_standard_client(account_id: Option<&str>) -> rquest::Client
     }
 }
 
-const CLOUD_CODE_BASE_URL: &str = "https://cloudcode-pa.googleapis.com"; // [OPSEC] Wektor U: prod zamiast staging
+const CLOUD_CODE_BASE_URL: &str = "https://daily-cloudcode-pa.sandbox.googleapis.com";
 
 
 
@@ -120,75 +121,64 @@ async fn fetch_project_id(access_token: &str, email: &str, account_id: Option<&s
     let client = create_standard_client(account_id).await;
     let meta = json!({"metadata": {"ideType": "ANTIGRAVITY"}}); // [OPSEC] Synchronized with Draculabo reference
 
-    // 1. Krok pierwszy: PROD loadCodeAssist (wyciąganie struktury)
     let res = client
-        .post(format!("{}/v1internal:loadCodeAssist", "https://cloudcode-pa.googleapis.com")) // W MITM pierwszy jest zawsze na PROD
-        .headers(crate::utils::http::google_api_headers(access_token))
+        .post(format!("{}/v1internal:loadCodeAssist", CLOUD_CODE_BASE_URL))
+        .header(rquest::header::AUTHORIZATION, format!("Bearer {}", access_token))
+        .header(rquest::header::CONTENT_TYPE, "application/json")
+        .header(rquest::header::USER_AGENT, crate::constants::NATIVE_OAUTH_USER_AGENT.as_str())
         .json(&meta)
         .send()
         .await;
 
-    let mut project_id = None;
-    let mut subscription_tier = None;
-    let mut tier_id_for_onboard = "free-tier".to_string();
-
     match res {
-        Ok(response) => {
-            if response.status().is_success() {
-                if let Ok(data) = response.json::<LoadProjectResponse>().await {
-                    project_id = data.project_id.clone();
+        Ok(res) => {
+            if res.status().is_success() {
+                if let Ok(data) = res.json::<LoadProjectResponse>().await {
+                    let project_id = data.project_id.clone();
                     
-                    let mut tier = data.paid_tier.as_ref().and_then(|t| t.name.clone())
+                    // Core logic: Multi-level fallback for tier extraction
+                    let mut subscription_tier = data.paid_tier.as_ref().and_then(|t| t.name.clone())
                         .or_else(|| data.paid_tier.as_ref().and_then(|t| t.id.clone()));
                         
                     let is_ineligible = data.ineligible_tiers.is_some() && !data.ineligible_tiers.as_ref().unwrap().is_empty();
                     
-                    if tier.is_none() {
+                    if subscription_tier.is_none() {
                         if !is_ineligible {
-                            tier = data.current_tier.as_ref().and_then(|t| t.name.clone())
+                            subscription_tier = data.current_tier.as_ref().and_then(|t| t.name.clone())
                                 .or_else(|| data.current_tier.as_ref().and_then(|t| t.id.clone()));
                         } else {
                             if let Some(mut allowed) = data.allowed_tiers {
                                 if let Some(default_tier) = allowed.iter_mut().find(|t| t.is_default == Some(true)) {
                                     if let Some(name) = &default_tier.name {
-                                        tier = Some(format!("{} (Restricted)", name));
+                                        subscription_tier = Some(format!("{} (Restricted)", name));
                                     } else if let Some(id) = &default_tier.id {
-                                        tier = Some(format!("{} (Restricted)", id));
+                                        subscription_tier = Some(format!("{} (Restricted)", id));
                                     }
                                 }
                             }
                         }
                     }
                     
-                    if let Some(ref t) = tier {
+                    if let Some(ref tier) = subscription_tier {
                         crate::modules::logger::log_info(&format!(
-                            "📊 [{}] Subscription identified successfully: {}", email, t
+                            "📊 [{}] Subscription identified successfully: {}", email, tier
                         ));
                     }
                     
-                    tier_id_for_onboard = data.paid_tier.as_ref().and_then(|t| t.id.clone())
-                        .or_else(|| data.current_tier.as_ref().and_then(|t| t.id.clone()))
-                        .unwrap_or_else(|| "free-tier".to_string());
-                        
-                    subscription_tier = tier;
+                    return (project_id, subscription_tier);
                 }
             } else {
-                crate::modules::logger::log_warn(&format!("⚠️ [{}] PROD loadCodeAssist failed: {}", email, response.status()));
+                crate::modules::logger::log_warn(&format!(
+                    "⚠️  [{}] loadCodeAssist failed: Status: {}", email, res.status()
+                ));
             }
         }
-        Err(e) => crate::modules::logger::log_error(&format!("❌ [{}] PROD loadCodeAssist network error: {}", email, e)),
+        Err(e) => {
+            crate::modules::logger::log_error(&format!("❌ [{}] loadCodeAssist network error: {}", email, e));
+        }
     }
-
-    // Ustawiamy fallback project jeśli nie ma
-    let safe_pid = project_id.clone().unwrap_or_else(|| "advance-fold-f0tq9".to_string());
-    if project_id.is_some() {
-        crate::modules::logger::log_info(&format!("🎯 [{}] Cloud project assigned: {}", email, safe_pid));
-    }
-
-    // Lightweight session init — matching Draculabo reference (no aggressive DAILY onboarding)
-    crate::modules::logger::log_info(&format!("✅ [{}] Project resolved, session ready", email));
-
-    (project_id, subscription_tier)
+    
+    (None, None)
 }
 
 /// Unified entry point for fetching account quota
@@ -223,9 +213,6 @@ pub async fn fetch_quota_with_cache(
     };
 
 
-    let mut quota_data = QuotaData::new();
-    quota_data.subscription_tier = subscription_tier.clone();
-    let mut any_success = false;
     let mut last_error: Option<AppError> = None;
 
     for (ep_idx, ep_url) in QUOTA_API_ENDPOINTS.iter().enumerate() {
@@ -233,76 +220,93 @@ pub async fn fetch_quota_with_cache(
 
         match client
             .post(*ep_url)
-            .headers(crate::utils::http::google_api_headers(access_token))
+            .bearer_auth(access_token)
+            .header(rquest::header::USER_AGENT, crate::constants::NATIVE_OAUTH_USER_AGENT.as_str())
             .json(&payload)
             .send()
             .await
         {
             Ok(response) => {
+                // Convert HTTP error status to AppError
                 if let Err(_) = response.error_for_status_ref() {
                     let status = response.status();
-                    let text = response.text().await.unwrap_or_else(|_| "No body".to_string());
                     
+                    // ✅ Special handling for 403 Forbidden - return directly, no retry
                     if status == rquest::StatusCode::FORBIDDEN {
                         crate::modules::logger::log_warn(&format!(
-                            "Account unauthorized (403 Forbidden) on {}. DETAILS: {}", ep_url, text
+                            "Account unauthorized (403 Forbidden), marking as forbidden"
                         ));
-                        last_error = Some(AppError::Unknown(format!("HTTP {} - {}", status, text)));
-                        continue;
+                        let mut q = QuotaData::new();
+                        q.is_forbidden = true;
+                        q.subscription_tier = subscription_tier.clone();
+                        return Ok((q, project_id.clone()));
                     }
                     
+                    let text = response.text().await.unwrap_or_default();
+
+                    // 429/5xx: fallback to next endpoint
                     if has_next && (status == rquest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error()) {
-                         crate::modules::logger::log_warn(&format!("Quota API {} returned {}, retrying on next...", ep_url, status));
+                         crate::modules::logger::log_warn(&format!("Quota API {} returned {}, falling back to next endpoint", ep_url, status));
                          last_error = Some(AppError::Unknown(format!("HTTP {} - {}", status, text)));
                          tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                         continue;
                     }
-                    continue;
+
+                    return Err(AppError::Unknown(format!("API Error: {} - {}", status, text)));
                 }
 
-                any_success = true;
+                if ep_idx > 0 {
+                    crate::modules::logger::log_info(&format!("Quota API fallback succeeded at endpoint #{}", ep_idx + 1));
+                }
 
-                if let Ok(quota_response) = response.json::<QuotaResponse>().await {
-                    tracing::debug!("Quota API {} returned {} models", ep_url, quota_response.models.len());
+                let quota_response: QuotaResponse = response
+                    .json()
+                    .await
+                    .map_err(AppError::from)?;
+                
+                let mut quota_data = QuotaData::new();
+                
+                tracing::debug!("Quota API returned {} models", quota_response.models.len());
 
-                    for (name, info) in quota_response.models {
-                        // Unikamy duplikatów modeli ze środowisk
-                        if quota_data.models.iter().any(|m| m.name == name) {
-                            continue;
-                        }
-
-                        if let Some(quota_info) = info.quota_info {
-                            let percentage = quota_info.remaining_fraction
-                                .map(|f| (f * 100.0) as i32)
-                                .unwrap_or(0);
-                            
-                            let reset_time = quota_info.reset_time.clone().unwrap_or_default();
-                            
-                            // Zachowujemy tylko sensowne
-                            if name.contains("gemini") || name.contains("claude") || name.contains("gpt") || name.contains("image") || name.contains("imagen") {
-                                let model_quota = crate::models::quota::ModelQuota {
-                                    name,
-                                    percentage,
-                                    reset_time,
-                                    display_name: info.display_name,
-                                    supports_images: info.supports_images,
-                                    supports_thinking: info.supports_thinking,
-                                    thinking_budget: info.thinking_budget,
-                                    recommended: info.recommended,
-                                    max_tokens: info.max_tokens,
-                                    max_output_tokens: info.max_output_tokens,
-                                    supported_mime_types: info.supported_mime_types,
-                                };
-                                quota_data.add_model(model_quota);
-                            }
-                        }
-                    }
-                    
-                    if let Some(deprecated) = quota_response.deprecated_model_ids {
-                        for (old_id, info) in deprecated {
-                            quota_data.model_forwarding_rules.insert(old_id, info.new_model_id);
+                for (name, info) in quota_response.models {
+                    if let Some(quota_info) = info.quota_info {
+                        let percentage = quota_info.remaining_fraction
+                            .map(|f| (f * 100.0) as i32)
+                            .unwrap_or(0);
+                        
+                        let reset_time = quota_info.reset_time.clone().unwrap_or_default();
+                        
+                        // Only keep models we care about (exclude internal chat models)
+                        if name.starts_with("gemini") || name.starts_with("claude") || name.contains("claude") || name.starts_with("gpt") || name.starts_with("image") || name.starts_with("imagen") {
+                            let model_quota = crate::models::quota::ModelQuota {
+                                name,
+                                percentage,
+                                reset_time,
+                                display_name: info.display_name,
+                                supports_images: info.supports_images,
+                                supports_thinking: info.supports_thinking,
+                                thinking_budget: info.thinking_budget,
+                                recommended: info.recommended,
+                                max_tokens: info.max_tokens,
+                                max_output_tokens: info.max_output_tokens,
+                                supported_mime_types: info.supported_mime_types,
+                            };
+                            quota_data.add_model(model_quota);
                         }
                     }
                 }
+                
+                // Parse deprecated model routing rules
+                if let Some(deprecated) = quota_response.deprecated_model_ids {
+                    for (old_id, info) in deprecated {
+                        quota_data.model_forwarding_rules.insert(old_id, info.new_model_id);
+                    }
+                }
+                
+                // Set subscription tier
+                quota_data.subscription_tier = subscription_tier.clone();
+                
+                return Ok((quota_data, project_id.clone()));
             },
             Err(e) => {
                 crate::modules::logger::log_warn(&format!("Quota API request failed at {}: {}", ep_url, e));
@@ -314,19 +318,7 @@ pub async fn fetch_quota_with_cache(
         }
     }
     
-    if any_success {
-        // Jeśli choć jeden endpoint odpowiedział modelami - udało się
-        return Ok((quota_data, project_id.clone()));
-    }
-
-    if let Some(AppError::Unknown(msg)) = &last_error {
-        if msg.contains("403") {
-            quota_data.is_forbidden = true;
-            return Ok((quota_data, project_id.clone()));
-        }
-    }
-
-    Err(last_error.unwrap_or_else(|| AppError::Unknown("Quota fetch failed: no endpoint returned models".to_string())))
+    Err(last_error.unwrap_or_else(|| AppError::Unknown("Quota fetch failed: all endpoints exhausted".to_string())))
 }
 
 /// Internal fetch quota logic
