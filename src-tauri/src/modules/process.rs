@@ -849,41 +849,29 @@ pub fn start_antigravity(account_id: Option<&str>) -> Result<(), String> {
 
     #[cfg(target_os = "windows")]
     {
-        let has_args = args.as_ref().map_or(false, |a| !a.is_empty());
-        
-        if has_args {
-            if let Some(detected_path) = get_antigravity_executable_path() {
-                let path_str = detected_path.to_string_lossy().to_string();
-                crate::modules::logger::log_info(&format!(
-                    "Starting with auto-detected path (has args): {}",
-                    path_str
-                ));
-                
-                use crate::utils::command::CommandExtWrapper;
-                let mut cmd = Command::new(&path_str);
-                cmd.creation_flags_windows();
-                if let Some(ref args) = args {
-                    for arg in args {
-                        cmd.arg(arg);
-                    }
-                }
-                
-                apply_spoofed_env(&mut cmd, account_id);
-                cmd.spawn().map_err(|e| format!("Startup failed: {}", e))?;
-            } else {
-                return Err("Startup arguments configured but cannot find Antigravity executable path. Please set the executable path manually in Settings.".to_string());
-            }
-        } else {
+        // [OPSEC v4.1.32] Never use "start antigravity://" because Windows ShellExecute drops our spoofed environment variables.
+        // We MUST spawn the executable directly so it inherits USERNAME and COMPUTERNAME for the Unleash telemetry.
+        if let Some(detected_path) = get_antigravity_executable_path() {
+            let path_str = detected_path.to_string_lossy().to_string();
+            crate::modules::logger::log_info(&format!(
+                "Starting with auto-detected path (Zero-Emission Env Spoofing enforced): {}",
+                path_str
+            ));
+            
             use crate::utils::command::CommandExtWrapper;
-            let mut cmd = Command::new("cmd");
+            let mut cmd = Command::new(&path_str);
             cmd.creation_flags_windows();
-            cmd.args(["/C", "start", "antigravity://"]);
+            
+            if let Some(ref args) = args {
+                for arg in args {
+                    cmd.arg(arg);
+                }
+            }
             
             apply_spoofed_env(&mut cmd, account_id);
-            let result = cmd.spawn();
-            if result.is_err() {
-                return Err("Startup failed, please open Antigravity manually".to_string());
-            }
+            cmd.spawn().map_err(|e| format!("Startup failed: {}", e))?;
+        } else {
+            return Err("Cannot find Antigravity executable path for direct launch (required for secure environment spoofing). Please set the executable path manually in Settings.".to_string());
         }
     }
 
