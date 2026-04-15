@@ -849,6 +849,14 @@ pub fn delete_account(account_id: &str) -> Result<(), String> {
     let account_path = accounts_dir.join(format!("{}.json", account_id));
 
     if account_path.exists() {
+        if let Ok(account) = load_account(account_id) {
+            // [OPSEC] Revoke refresh_token to prevent zombie session detection
+            let raw_token = account.token.refresh_token.clone();
+            tokio::spawn(async move {
+                let _ = crate::modules::oauth::revoke_token(&raw_token).await;
+            });
+        }
+        
         fs::remove_file(&account_path)
             .map_err(|e| format!("failed_to_delete_account_file: {}", e))?;
     }
@@ -880,6 +888,13 @@ pub fn delete_accounts(account_ids: &[String]) -> Result<(), String> {
         // Delete account file
         let account_path = accounts_dir.join(format!("{}.json", account_id));
         if account_path.exists() {
+            if let Ok(account) = load_account(account_id) {
+                // [OPSEC] Revoke refresh_token to prevent zombie session detection
+                let raw_token = account.token.refresh_token.clone();
+                tokio::spawn(async move {
+                    let _ = crate::modules::oauth::revoke_token(&raw_token).await;
+                });
+            }
             let _ = fs::remove_file(&account_path);
         }
 

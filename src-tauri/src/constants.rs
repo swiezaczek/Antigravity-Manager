@@ -197,7 +197,13 @@ pub static NATIVE_OAUTH_USER_AGENT: LazyLock<String> = LazyLock::new(|| {
         "linux" => "linux/amd64",
         _ => "linux/amd64",
     };
-    format!("antigravity/1.21.9 {} google-api-nodejs-client/10.3.0", platform_info) // [OPSEC] Wektor T User_Agent_Sync
+    format!("antigravity/{} {} google-api-nodejs-client/10.3.0", CURRENT_VERSION.as_str(), platform_info) // [OPSEC v4.1.32] Synced with CURRENT_VERSION
+});
+
+/// Short User-Agent for OAuth token exchange (no antigravity/ prefix)
+/// Official client sends ONLY "google-api-nodejs-client/10.3.0" to /token endpoint
+pub static OAUTH_SHORT_UA: LazyLock<String> = LazyLock::new(|| {
+    "google-api-nodejs-client/10.3.0".to_string()
 });
 
 /// Current resolved Antigravity version (e.g., "4.1.31")
@@ -216,7 +222,7 @@ pub fn get_default_user_agent() -> String {
         "linux" => "linux/amd64",
         _ => "linux/amd64",
     };
-    format!("antigravity/1.21.9 {} google-api-nodejs-client/10.3.0", platform_info) // [OPSEC] Wektor T2
+    format!("antigravity/{} {} google-api-nodejs-client/10.3.0", CURRENT_VERSION.as_str(), platform_info) // [OPSEC v4.1.32] Synced with CURRENT_VERSION
 }
 
 /// Global Session ID (generated once per app launch)
@@ -236,7 +242,7 @@ pub static USER_AGENT: LazyLock<String> = LazyLock::new(|| {
         _ => "linux/amd64",
     };
 
-    let ua = format!("antigravity/1.21.9 {} google-api-nodejs-client/10.3.0", platform_info); // [OPSEC] Wektor T User_Agent_Sync
+    let ua = format!("antigravity/{} {} google-api-nodejs-client/10.3.0", CURRENT_VERSION.as_str(), platform_info); // [OPSEC v4.1.32] Synced with CURRENT_VERSION
     ua
 });
 

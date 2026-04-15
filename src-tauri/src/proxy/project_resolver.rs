@@ -3,21 +3,23 @@ use serde_json::Value;
 /// 使用 Antigravity 的 loadCodeAssist API 获取 project_id
 /// 这是获取 cloudaicompanionProject 的正确方式
 pub async fn fetch_project_id(access_token: &str) -> Result<String, String> {
-    // 使用 Sandbox 环境，避免 Prod 环境的 429 错误
-    let url = "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:loadCodeAssist";
+    // [OPSEC v4.1.32] Changed from Sandbox to Prod (original client NEVER hits sandbox)
+    let url = "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist";
     
     let request_body = serde_json::json!({
         "metadata": {
-            "ideType": "ANTIGRAVITY"
+            "ide_type": "ANTIGRAVITY",
+            "ide_version": crate::constants::CURRENT_VERSION.as_str(),
+            "ide_name": "antigravity"
         }
     });
     
+    // [OPSEC v4.1.32] Use centralized google_api_headers() for consistent fingerprint
+    let headers = crate::utils::http::google_api_headers(access_token);
     let client = crate::utils::http::get_standard_client();
     let response = client
         .post(url)
-        .bearer_auth(access_token)
-        .header("User-Agent", crate::constants::NATIVE_OAUTH_USER_AGENT.as_str())
-        .header("Content-Type", "application/json")
+        .headers(headers)
         .json(&request_body)
         .send()
         .await
@@ -32,6 +34,30 @@ pub async fn fetch_project_id(access_token: &str) -> Result<String, String> {
     let data: Value = response.json()
         .await
         .map_err(|e| format!("解析响应失败: {}", e))?;
+        
+    // [OPSEC] Wykonanie dyskretnego Onboardingu przy rozwiązywaniu zagubionego projektu
+    let tier_for_onboard = data.get("currentTier").and_then(|t| t.get("id")).and_then(|v| v.as_str()).unwrap_or("free-tier").to_string();
+    let access_token_clone = access_token.to_string();
+    
+    tokio::spawn(async move {
+        let onboard_meta = serde_json::json!({
+            "tier_id": tier_for_onboard,
+            "metadata": {
+                "ide_type": "ANTIGRAVITY",
+                "ide_version": crate::constants::CURRENT_VERSION.as_str(),
+                "ide_name": "antigravity"
+            }
+        });
+        
+        // [OPSEC v4.1.32] Onboard also uses Prod + centralized headers
+        let onboard_headers = crate::utils::http::google_api_headers(&access_token_clone);
+        let client = crate::utils::http::get_standard_client();
+        let _ = client.post("https://cloudcode-pa.googleapis.com/v1internal:onboardUser")
+            .headers(onboard_headers)
+            .json(&onboard_meta)
+            .send()
+            .await;
+    });
     
     // 提取 cloudaicompanionProject
     if let Some(project_id) = data.get("cloudaicompanionProject")

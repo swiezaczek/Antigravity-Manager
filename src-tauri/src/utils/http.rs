@@ -74,7 +74,31 @@ pub fn google_api_headers(access_token: &str) -> HeaderMap {
         HeaderValue::from_str(ua).unwrap_or_else(|_| HeaderValue::from_static("google-api-nodejs-client/10.3.0")),
     ); // [OPSEC] Wektor T Fallback CleanUp
     h.insert(HeaderName::from_static("x-goog-api-client"), HeaderValue::from_static("gl-node/22.21.1"));
-    h.insert(HeaderName::from_static("connection"), HeaderValue::from_static("keep-alive")); // [OPSEC] Wektor O: keep-alive sync
+    h.insert(HeaderName::from_static("connection"), HeaderValue::from_static("keep-alive"));
+    h
+}
+
+/// [OPSEC v4.1.32] Headers for the official Go Language Server client 
+/// MUST be used for streamGenerateContent and other Go-initiated requests.
+/// Go LS uses a minimal subset of headers.
+pub fn go_ls_api_headers(access_token: &str) -> HeaderMap {
+    // Note: No "google-api-nodejs-client" in Go LS UA!
+    let ua_str = format!("antigravity/{} windows/amd64", crate::constants::CURRENT_VERSION.as_str());
+    
+    let mut h = HeaderMap::with_capacity(4);
+    h.insert(HeaderName::from_static("accept-encoding"), HeaderValue::from_static("gzip"));
+    h.insert(
+        HeaderName::from_static("authorization"),
+        HeaderValue::from_str(&format!("Bearer {}", access_token))
+            .expect("invalid access token for header"),
+    );
+    h.insert(HeaderName::from_static("content-type"), HeaderValue::from_static("application/json"));
+    h.insert(
+        HeaderName::from_static("user-agent"),
+        HeaderValue::from_str(&ua_str).unwrap_or_else(|_| HeaderValue::from_static("antigravity/1.22.2 windows/amd64")),
+    );
+    
+    // Note: Go LS does NOT send 'accept: */*', 'connection: keep-alive', or 'x-goog-api-client'
     h
 }
 
@@ -82,14 +106,16 @@ pub fn google_api_headers(access_token: &str) -> HeaderMap {
 /// No Authorization header (credentials in form body). No x-goog-api-client.
 /// Content-Type will be set by `.form()` automatically.
 pub fn google_oauth_headers() -> HeaderMap {
-    let ua = crate::constants::NATIVE_OAUTH_USER_AGENT.as_str();
+    // [OPSEC v4.1.32] OAuth token exchange uses SHORT UA (no antigravity/ prefix)
+    // Official gaxios sends only "google-api-nodejs-client/10.3.0" to /token
+    let ua = crate::constants::OAUTH_SHORT_UA.as_str();
     let mut h = HeaderMap::with_capacity(4);
     h.insert(HeaderName::from_static("accept"), HeaderValue::from_static("*/*"));
     h.insert(HeaderName::from_static("accept-encoding"), HeaderValue::from_static("gzip, deflate, br"));
     h.insert(
         HeaderName::from_static("user-agent"),
         HeaderValue::from_str(ua).unwrap_or_else(|_| HeaderValue::from_static("google-api-nodejs-client/10.3.0")),
-    ); // [OPSEC] Wektor T Fallback CleanUp
+    );
     h.insert(HeaderName::from_static("x-goog-api-client"), HeaderValue::from_static("gl-node/22.21.1")); // [OPSEC] Wektor O: auth sync
     h.insert(HeaderName::from_static("connection"), HeaderValue::from_static("keep-alive")); // [OPSEC] Wektor O: keep-alive sync
     h

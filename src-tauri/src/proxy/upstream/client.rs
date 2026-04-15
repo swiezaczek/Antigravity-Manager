@@ -268,18 +268,13 @@ impl UpstreamClient {
         // [NEW] Get client based on account (cached in proxy pool manager)
         let client = self.get_client(account_id).await;
 
-        // [OPSEC] Use canonical Google header helper for correct ordering
-        let mut headers = crate::utils::http::google_api_headers(access_token);
+        // [OPSEC v4.1.32] Ensure calls proxied by Go LS using this upstream client
+        // use the exact Go LS header fingerprint, NOT the Node.js frontend headers.
+        let mut headers = crate::utils::http::go_ls_api_headers(access_token);
         
-        // Override user-agent with dynamic value (may differ from default)
-        headers.insert(
-            "user-agent",
-            header::HeaderValue::from_str(&self.get_user_agent().await).unwrap_or_else(|e| {
-                tracing::warn!("Invalid User-Agent header value, using fallback: {}", e);
-                header::HeaderValue::from_static("google-api-nodejs-client/10.3.0")
-            }),
-        ); // [OPSEC] Wektor T Fallback CleanUp
-
+        // Note: We do NOT override "user-agent" with `self.get_user_agent().await`
+        // here because `get_user_agent` currently includes the `google-api-nodejs-client`
+        // suffix used by Node.js. Go LS UA is correctly initialized inside `go_ls_api_headers`.
         // 注入额外的 Headers (如 anthropic-beta)
         for (k, v) in extra_headers {
             if let Ok(hk) = header::HeaderName::from_bytes(k.as_bytes()) {

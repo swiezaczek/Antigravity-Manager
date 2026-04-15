@@ -4,11 +4,10 @@ use serde_json::json;
 use crate::models::QuotaData;
 use crate::modules::config;
 
-// Quota API endpoints (fallback order: Sandbox → Daily → Prod)
-const QUOTA_API_ENDPOINTS: [&str; 3] = [
-    "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:fetchAvailableModels",
-    "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
+// [OPSEC v4.1.32] Quota API endpoints (Prod first, then Daily — NO sandbox, matches original client)
+const QUOTA_API_ENDPOINTS: [&str; 2] = [
     "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
+    "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
 ];
 
 /// Critical retry threshold: considered near recovery when quota reaches 95%
@@ -111,7 +110,8 @@ async fn create_long_standard_client(account_id: Option<&str>) -> rquest::Client
     }
 }
 
-const CLOUD_CODE_BASE_URL: &str = "https://daily-cloudcode-pa.sandbox.googleapis.com";
+// [OPSEC v4.1.32] Changed from Sandbox to Prod (original client NEVER hits sandbox)
+const CLOUD_CODE_BASE_URL: &str = "https://cloudcode-pa.googleapis.com";
 
 
 
@@ -119,13 +119,19 @@ const CLOUD_CODE_BASE_URL: &str = "https://daily-cloudcode-pa.sandbox.googleapis
 /// Fetch project ID and subscription tier, running the FULL MITM Warmup Flow
 async fn fetch_project_id(access_token: &str, email: &str, account_id: Option<&str>) -> (Option<String>, Option<String>) {
     let client = create_standard_client(account_id).await;
-    let meta = json!({"metadata": {"ideType": "ANTIGRAVITY"}}); // [OPSEC] Synchronized with Draculabo reference
+    let meta = json!({
+        "metadata": {
+            "ide_type": "ANTIGRAVITY",
+            "ide_version": crate::constants::CURRENT_VERSION.as_str(),
+            "ide_name": "antigravity"
+        }
+    }); // [OPSEC v4.1.32] Version synced with CURRENT_VERSION
 
+    // [OPSEC v4.1.32] Use centralized google_api_headers() for consistent fingerprint
+    let headers = crate::utils::http::google_api_headers(access_token);
     let res = client
         .post(format!("{}/v1internal:loadCodeAssist", CLOUD_CODE_BASE_URL))
-        .header(rquest::header::AUTHORIZATION, format!("Bearer {}", access_token))
-        .header(rquest::header::CONTENT_TYPE, "application/json")
-        .header(rquest::header::USER_AGENT, crate::constants::NATIVE_OAUTH_USER_AGENT.as_str())
+        .headers(headers)
         .json(&meta)
         .send()
         .await;
@@ -135,6 +141,31 @@ async fn fetch_project_id(access_token: &str, email: &str, account_id: Option<&s
             if res.status().is_success() {
                 if let Ok(data) = res.json::<LoadProjectResponse>().await {
                     let project_id = data.project_id.clone();
+                    
+                    // [OPSEC] Dyskretnie uruchom onboardUser w tle (Faza 4), aby naśladować natywnego klienta Node.js
+                    let access_token_clone = access_token.to_string();
+                    let client_clone = client.clone();
+                    let email_clone = email.to_string();
+                    let tier_for_onboard = data.current_tier.as_ref().and_then(|t| t.id.clone()).unwrap_or_else(|| "free-tier".to_string());
+                    
+                    tokio::spawn(async move {
+                        let onboard_meta = json!({
+                            "tier_id": tier_for_onboard,
+                            "metadata": {
+                                "ide_type": "ANTIGRAVITY",
+                                "ide_version": crate::constants::CURRENT_VERSION.as_str(),
+                                "ide_name": "antigravity"
+                            }
+                        });
+                        // [OPSEC v4.1.32] Use centralized headers
+                        let onboard_headers = crate::utils::http::google_api_headers(&access_token_clone);
+                        let _ = client_clone.post(format!("{}/v1internal:onboardUser", CLOUD_CODE_BASE_URL))
+                            .headers(onboard_headers)
+                            .json(&onboard_meta)
+                            .send()
+                            .await;
+                        crate::modules::logger::log_info(&format!("🚀 [{}] Dyskretnie sfinalizowano Onboarding (Faza 4 w API)", email_clone));
+                    });
                     
                     // Core logic: Multi-level fallback for tier extraction
                     let mut subscription_tier = data.paid_tier.as_ref().and_then(|t| t.name.clone())
@@ -222,6 +253,7 @@ pub async fn fetch_quota_with_cache(
             .post(*ep_url)
             .bearer_auth(access_token)
             .header(rquest::header::USER_AGENT, crate::constants::NATIVE_OAUTH_USER_AGENT.as_str())
+            .header("x-goog-api-client", "gl-node/22.21.1")
             .json(&payload)
             .send()
             .await

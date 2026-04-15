@@ -199,6 +199,20 @@ pub fn wrap_request(
             gen_config.insert("topP".to_string(), json!(1.0));
         }
 
+        // [OPSEC v4.1.32] Inject candidateCount=1 to match official Go LS client
+        if !gen_config.contains_key("candidateCount") {
+            gen_config.insert("candidateCount".to_string(), json!(1));
+        }
+
+        // [OPSEC v4.1.32] Inject default maxOutputTokens=16384 to match official client
+        if !gen_config.contains_key("maxOutputTokens") {
+            gen_config.insert("maxOutputTokens".to_string(), json!(16384));
+        }
+        // [OPSEC v4.1.32] Inject 5 stopSequences to match official Go LS client
+        if !gen_config.contains_key("stopSequences") {
+            gen_config.insert("stopSequences".to_string(), json!(["<|user|>", "<|bot|>", "<|context_request|>", "<|endoftext|>", "<|end_of_turn|>"]));
+        }
+
         // [FIX] Convert v1beta thinkingLevel (string) to v1internal thinkingBudget (number).
         // Clients (e.g. OpenClaw, Cline) may send thinkingLevel which v1internal does not accept,
         // causing 400 INVALID_ARGUMENT. Convert before any budget processing below.
@@ -518,29 +532,44 @@ pub fn wrap_request(
         });
     }
 
-    // [OPSEC] Wektor R & S: Ochrona Workspace Fingerprint przed wyciekiem krzyżowym
-    let mut derived_sid = session_id.unwrap_or("default").to_string();
-    if let Some(account_id_str) = account_id {
-        // Tworzy stałe per konto salt dla requestów
+    // [OPSEC v4.1.32] Generate per-account trajectory UUID for requestId
+    // Official Go LS uses a stable UUID v4 per conversation session per account
+    let derived_sid = if let Some(account_id_str) = account_id {
+        // Derive a stable UUID from account_id + session_id (deterministic per session per account)
         use std::hash::{Hash, Hasher};
         use std::collections::hash_map::DefaultHasher;
         let mut hasher = DefaultHasher::new();
         account_id_str.hash(&mut hasher);
-        derived_sid.hash(&mut hasher);
-        derived_sid = format!("{:016x}", hasher.finish());
-        
+        session_id.unwrap_or("default").hash(&mut hasher);
+        let hash = hasher.finish();
+        // Format as UUID v4-like string from hash bytes
+        format!("{:08x}-{:04x}-4{:03x}-{:04x}-{:012x}",
+            (hash >> 32) as u32,
+            (hash >> 16) as u16 & 0xffff,
+            hash as u16 & 0x0fff,
+            ((hash >> 48) as u16 & 0x3fff) | 0x8000,
+            hash & 0xffffffffffff
+        )
+    } else {
+        uuid::Uuid::new_v4().to_string()
+    };
+
+    if let Some(account_id_str) = account_id {
         inner_request["sessionId"] = json!(crate::proxy::common::session::derive_session_id(account_id_str));
     } else {
         inner_request["sessionId"] = json!(uuid::Uuid::new_v4().to_string());
     }
 
+    // [OPSEC v4.1.32] Use global sequence counter per account instead of internal array length
+    let seq_num = crate::proxy::common::session::next_sequence_number(account_id);
+
     let final_request = json!({
         "project": project_id,
-        // [CHANGED v4.1.24] Structured requestId to match official format
-        "requestId": format!("agent/vscode/{}/{}", &derived_sid[..derived_sid.len().min(8)], message_count), // [OPSEC] Wektor S
+        // [OPSEC v4.1.32] requestId: agent/{unix_ms}/{trajectory_uuid}/{global_seq} (matches official Go LS)
+        "requestId": format!("agent/{}/{}/{}", chrono::Utc::now().timestamp_millis(), derived_sid, seq_num),
         "request": inner_request,
         "model": config.final_model,
-        "userAgent": "vscode", // [OPSEC] Wektor S
+        "userAgent": "antigravity", // [OPSEC v4.1.32] Must match official Go LS client (was "vscode")
         // [CHANGED v4.1.24] Use "agent" for all non-image requests
         "requestType": if config.request_type == "image_gen" { "image_gen" } else { "agent" }
     });

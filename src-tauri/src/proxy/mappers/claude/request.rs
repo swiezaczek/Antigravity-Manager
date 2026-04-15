@@ -651,22 +651,34 @@ pub fn transform_claude_request_in(
         }
     }
 
-    // [ADDED v4.1.24] 注入稳定 sessionId 对齐官方规范 & [OPSEC] Wektor R/S Hash
-    let mut derived_sid = session_id.to_string();
-    if let Some(account_id) = account_id {
+    // [OPSEC v4.1.32] Generate per-account trajectory UUID for requestId
+    let derived_sid = if let Some(account_id) = account_id {
         use std::hash::{Hash, Hasher};
         use std::collections::hash_map::DefaultHasher;
         let mut hasher = DefaultHasher::new();
         account_id.hash(&mut hasher);
-        derived_sid.hash(&mut hasher);
-        derived_sid = format!("{:016x}", hasher.finish());
+        session_id.hash(&mut hasher);
+        let hash = hasher.finish();
+        format!("{:08x}-{:04x}-4{:03x}-{:04x}-{:012x}",
+            (hash >> 32) as u32,
+            (hash >> 16) as u16 & 0xffff,
+            hash as u16 & 0x0fff,
+            ((hash >> 48) as u16 & 0x3fff) | 0x8000,
+            hash & 0xffffffffffff
+        )
+    } else {
+        uuid::Uuid::new_v4().to_string()
+    };
 
+    if let Some(account_id) = account_id {
         inner_request["sessionId"] = json!(crate::proxy::common::session::derive_session_id(account_id));
     }
 
-    // 生成 requestId
-    // [CHANGED v4.1.24] Structured requestId to match official format
-    let request_id = format!("agent/vscode/{}/{}", &derived_sid[..derived_sid.len().min(8)], message_count); // [OPSEC] Wektor S
+    // [OPSEC v4.1.32] Use global sequence counter per account instead of internal array length
+    let seq_num = crate::proxy::common::session::next_sequence_number(account_id);
+
+    // [OPSEC v4.1.32] requestId: agent/{unix_ms}/{trajectory_uuid}/{global_seq} (matches official Go LS)
+    let request_id = format!("agent/{}/{}/{}", chrono::Utc::now().timestamp_millis(), derived_sid, seq_num);
 
     // 构建最终请求体
     let mut body = json!({
@@ -674,7 +686,7 @@ pub fn transform_claude_request_in(
         "requestId": request_id,
         "request": inner_request,
         "model": config.final_model,
-        "userAgent": "vscode", // [OPSEC] Wektor S — must match official client identifier
+        "userAgent": "antigravity", // [OPSEC v4.1.32] Must match official Go LS client (was "vscode")
         // [CHANGED v4.1.24] Use "agent" for all non-image requests
         "requestType": if config.request_type == "image_gen" { "image_gen" } else { "agent" },
     });

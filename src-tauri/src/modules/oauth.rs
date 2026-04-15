@@ -331,12 +331,14 @@ pub fn get_auth_url_with_client(
 ) -> Result<(String, String), String> {
     let client = select_auth_client(client_key)?;
 
+    // [OPSEC v4.1.32] Scopes synced with original client dump (6 scopes, exact order)
     let scopes = vec![
         "https://www.googleapis.com/auth/cloud-platform",
-        "https://www.googleapis.com/auth/userinfo.email",
         "https://www.googleapis.com/auth/userinfo.profile",
-        "https://www.googleapis.com/auth/cclog",
         "https://www.googleapis.com/auth/experimentsandconfigs",
+        "https://www.googleapis.com/auth/userinfo.email",
+        "openid",
+        "https://www.googleapis.com/auth/cclog",
     ]
     .join(" ");
 
@@ -347,7 +349,6 @@ pub fn get_auth_url_with_client(
         ("scope", &scopes),
         ("access_type", "offline"),
         ("prompt", "consent"),
-        ("include_granted_scopes", "true"),
         ("state", state),
     ];
     
@@ -637,6 +638,35 @@ pub async fn refresh_access_token(
     account_id: Option<&str>,
 ) -> Result<TokenResponse, String> {
     refresh_access_token_with_client(refresh_token, account_id, None).await
+}
+
+/// Revoke the given token (access or refresh) from Google infrastructure.
+/// Helps prevent "zombie sessions" when deleting an account.
+pub async fn revoke_token(token: &str) -> Result<(), String> {
+    let client = crate::utils::http::get_standard_client();
+    
+    let params = [
+        ("token", token),
+    ];
+    
+    let response = client
+        .post("https://oauth2.googleapis.com/revoke")
+        .headers(crate::utils::http::google_oauth_headers())
+        .form(&params)
+        .send()
+        .await
+        .map_err(|e| format!("Token revoke request failed: {}", e))?;
+        
+    if response.status().is_success() {
+        crate::modules::logger::log_info("Successfully revoked token during account removal");
+        Ok(())
+    } else {
+        let status = response.status();
+        let error_text = response.text().await.unwrap_or_default();
+        crate::modules::logger::log_warn(&format!("Token revoke returned {}: {}", status, error_text));
+        // Return Ok anyway so account deletion proceeds even if token was already revoked/expired
+        Ok(())
+    }
 }
 
 /// Get user info
