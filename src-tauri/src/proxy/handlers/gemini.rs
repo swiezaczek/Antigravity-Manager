@@ -274,8 +274,6 @@ pub async fn handle_generate(
         let response = call_result.response;
         // [NEW] 提取实际请求的上游端点 URL，用于日志记录和排查
         let upstream_url = response.url().to_string();
-        // [Telemetry v6] Capture trace ID from Google's response before consuming body
-        let telemetry_trace_id = crate::proxy::telemetry::metrics_reporter::extract_trace_id(response.headers());
         let status = response.status();
         if status.is_success() {
             // 6. 响应处理
@@ -346,13 +344,6 @@ pub async fn handle_generate(
 
                 let s_id_for_stream = s_id.clone();
                 let model_name_for_stream = mapped_model.clone();
-                // [Telemetry v6] Clone vars for async stream closure
-                let telem_access_token = access_token.clone();
-                let telem_project_id = project_id.clone();
-                let telem_account_id = account_id.clone();
-                let telem_trajectory_uuid = telemetry_trajectory_uuid.clone();
-                let telem_trace_id = telemetry_trace_id.clone();
-                let telem_stream_start = telemetry_stream_start;
                 let stream = async_stream::stream! {
                     let mut first_data = first_chunk;
                     let mut telem_first_chunk_at: Option<std::time::Instant> = None;
@@ -388,10 +379,7 @@ pub async fn handle_generate(
                             None => break,
                         };
 
-                        // [Telemetry v6] Track first chunk arrival time
-                        if telem_first_chunk_at.is_none() {
-                            telem_first_chunk_at = Some(std::time::Instant::now());
-                        }
+                        // Track first chunk arrival time
                         debug!("[Gemini-SSE] Received chunk: {} bytes", bytes.len());
                         buffer.extend_from_slice(&bytes);
                         while let Some(pos) = buffer.iter().position(|&b| b == b'\n') {

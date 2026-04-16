@@ -837,9 +837,7 @@ pub async fn handle_messages(
     // 4. 上游调用 - 自动转换逻辑
     let client_wants_stream = request.stream;
 
-    // [Telemetry v6] Capture timing + trajectory for synthetic metrics
-    let telemetry_stream_start = std::time::Instant::now();
-    let telemetry_trajectory_uuid = crate::proxy::telemetry::metrics_reporter::extract_trajectory_uuid(
+    let telemetry_trajectory_uuid = crate::proxy::telemetry::registry::extract_trajectory_uuid(
         gemini_body.get("requestId").and_then(|v| v.as_str())
     );
 
@@ -912,8 +910,7 @@ pub async fn handle_messages(
         let response = call_result.response;
         // [NEW] 提取实际请求的上游端点 URL，用于日志记录和排查
         let upstream_url = response.url().to_string();
-        // [Telemetry v6] Capture trace ID from Google's response before consuming body
-        let telemetry_trace_id = crate::proxy::telemetry::metrics_reporter::extract_trace_id(response.headers());
+        // [Telemetry v6] Extract URL for debugging
         let status = response.status();
         last_status = status;
         
@@ -1028,32 +1025,7 @@ pub async fn handle_messages(
                                 }
                             })));
 
-                        // [Telemetry v6] Chain metrics reporter onto stream end
-                        let telem_access_token = access_token.clone();
-                        let telem_project_id = project_id.clone();
-                        let telem_account_id = account_id.clone();
-                        let telem_trajectory_uuid = telemetry_trajectory_uuid.clone();
-                        let telem_trace_id = telemetry_trace_id.clone();
-                        let telem_stream_start = telemetry_stream_start;
-                        let combined_stream_with_metrics = combined_stream.chain(
-                            futures::stream::once(async move {
-                                crate::proxy::telemetry::metrics_reporter::report_metrics(
-                                    crate::proxy::telemetry::metrics_reporter::CompletionEvent {
-                                        access_token: telem_access_token,
-                                        project_id: telem_project_id,
-                                        account_id: telem_account_id,
-                                        trajectory_uuid: telem_trajectory_uuid,
-                                        trace_id: telem_trace_id,
-                                        is_agentic: true,
-                                        stream_start: telem_stream_start,
-                                        first_chunk_at: None,
-                                        stream_end: std::time::Instant::now(),
-                                        success: true,
-                                    }
-                                );
-                                Ok::<Bytes, std::io::Error>(Bytes::new())
-                            })
-                        );
+                        let combined_stream_with_metrics = combined_stream;
                         let combined_stream_with_metrics = Box::pin(combined_stream_with_metrics);
 
                         // 判断客户端期望的格式
