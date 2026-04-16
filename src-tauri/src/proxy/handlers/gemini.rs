@@ -201,6 +201,20 @@ pub async fn handle_generate(
             );
         }
 
+        // [Telemetry v7] Register Trajectory for MITM Proxying
+        let telemetry_stream_start = std::time::Instant::now();
+        let telemetry_trajectory_uuid = crate::proxy::telemetry::registry::extract_trajectory_uuid(
+            wrapped_body.get("requestId").and_then(|v| v.as_str())
+        );
+
+        // Map the Go LS trajectory UUID to this proxy account's token/project
+        crate::proxy::telemetry::registry::TelemetryRegistry::global().register(
+            telemetry_trajectory_uuid.clone(),
+            access_token.clone(),
+            project_id.clone(),
+            account_id.clone(),
+        );
+
         let call_result = match upstream
             .call_v1_internal_with_headers(
                 upstream_method,
@@ -260,6 +274,8 @@ pub async fn handle_generate(
         let response = call_result.response;
         // [NEW] 提取实际请求的上游端点 URL，用于日志记录和排查
         let upstream_url = response.url().to_string();
+        // [Telemetry v6] Capture trace ID from Google's response before consuming body
+        let telemetry_trace_id = crate::proxy::telemetry::metrics_reporter::extract_trace_id(response.headers());
         let status = response.status();
         if status.is_success() {
             // 6. 响应处理
@@ -330,8 +346,16 @@ pub async fn handle_generate(
 
                 let s_id_for_stream = s_id.clone();
                 let model_name_for_stream = mapped_model.clone();
+                // [Telemetry v6] Clone vars for async stream closure
+                let telem_access_token = access_token.clone();
+                let telem_project_id = project_id.clone();
+                let telem_account_id = account_id.clone();
+                let telem_trajectory_uuid = telemetry_trajectory_uuid.clone();
+                let telem_trace_id = telemetry_trace_id.clone();
+                let telem_stream_start = telemetry_stream_start;
                 let stream = async_stream::stream! {
                     let mut first_data = first_chunk;
+                    let mut telem_first_chunk_at: Option<std::time::Instant> = None;
                     loop {
                         let item = if let Some(fd) = first_data.take() {
                             Some(Ok(fd))
@@ -364,6 +388,10 @@ pub async fn handle_generate(
                             None => break,
                         };
 
+                        // [Telemetry v6] Track first chunk arrival time
+                        if telem_first_chunk_at.is_none() {
+                            telem_first_chunk_at = Some(std::time::Instant::now());
+                        }
                         debug!("[Gemini-SSE] Received chunk: {} bytes", bytes.len());
                         buffer.extend_from_slice(&bytes);
                         while let Some(pos) = buffer.iter().position(|&b| b == b'\n') {
@@ -431,6 +459,8 @@ pub async fn handle_generate(
                             }
                         }
                     }
+                    // [Telemetry v7] Native MITM Proxying handles telemetry now.
+                    // Synthetic proxy code removed.
                 };
 
                 if client_wants_stream {

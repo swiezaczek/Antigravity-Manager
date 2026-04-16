@@ -695,6 +695,24 @@ impl AxumServer {
         } else {
             app
         };
+        // [MITM v7] Start forward proxy for native IDE telemetry interception
+        let mitm_port = port + 1;
+        match crate::proxy::mitm::ca::CertificateAuthority::load_or_generate() {
+            Ok(ca) => {
+                let ca = std::sync::Arc::new(ca);
+                crate::proxy::mitm::set_mitm_port(mitm_port);
+                let ca_clone = ca.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = crate::proxy::mitm::forward_proxy::start(ca_clone, mitm_port).await {
+                        tracing::error!("[MITM] Forward proxy failed: {}", e);
+                    }
+                });
+                tracing::info!("[MITM] Forward proxy started on 127.0.0.1:{}", mitm_port);
+            }
+            Err(e) => {
+                tracing::warn!("[MITM] CA init failed (proxy disabled): {}", e);
+            }
+        }
 
         // 绑定地址
         let addr = format!("{}:{}", host, port);

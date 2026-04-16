@@ -28,6 +28,8 @@ pub mod sticky_config; // 粘性调度配置
 pub mod upstream; // 上游客户端
 pub mod zai_vision_mcp; // Built-in Vision MCP server state
 pub mod zai_vision_tools; // Built-in Vision MCP tools (z.ai vision API) // 调试日志
+pub mod telemetry;         // Synthetic telemetry reporter (v6 — fixes quota degradation)
+pub mod mitm;              // MITM forward proxy (v7 — intercept native IDE telemetry)
 
 pub use config::update_global_system_prompt_config;
 pub use config::update_thinking_budget_config;

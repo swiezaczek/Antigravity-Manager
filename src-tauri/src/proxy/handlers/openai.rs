@@ -245,6 +245,13 @@ pub async fn handle_chat_completions(
 
         // 5. 发送请求
         let client_wants_stream = openai_req.stream;
+
+        // [Telemetry v6] Capture timing + trajectory for synthetic metrics
+        let telemetry_stream_start = std::time::Instant::now();
+        let telemetry_trajectory_uuid = crate::proxy::telemetry::metrics_reporter::extract_trajectory_uuid(
+            gemini_body.get("requestId").and_then(|v| v.as_str())
+        );
+
         let force_stream_internally = !client_wants_stream;
         let actual_stream = client_wants_stream || force_stream_internally;
 
@@ -334,6 +341,8 @@ pub async fn handle_chat_completions(
         let response = call_result.response;
         // [NEW] 提取实际请求的上游端点 URL，用于日志记录和排查
         let upstream_url = response.url().to_string();
+        // [Telemetry v6] Capture trace ID from Google's response before consuming body
+        let telemetry_trace_id = crate::proxy::telemetry::metrics_reporter::extract_trace_id(response.headers());
         let status = response.status();
         if status.is_success() {
             // 5. 处理流式 vs 非流式
@@ -441,9 +450,36 @@ pub async fn handle_chat_completions(
                     )
                     .chain(openai_stream);
 
+                // [Telemetry v6] Wrap stream to fire metrics after completion
+                let telem_access_token = access_token.clone();
+                let telem_project_id = project_id.clone();
+                let telem_account_id = account_id.clone();
+                let telem_trajectory_uuid = telemetry_trajectory_uuid.clone();
+                let telem_trace_id = telemetry_trace_id.clone();
+                let telem_stream_start = telemetry_stream_start;
+                let combined_stream_with_metrics = combined_stream.chain(
+                    futures::stream::once(async move {
+                        crate::proxy::telemetry::metrics_reporter::report_metrics(
+                            crate::proxy::telemetry::metrics_reporter::CompletionEvent {
+                                access_token: telem_access_token,
+                                project_id: telem_project_id,
+                                account_id: telem_account_id,
+                                trajectory_uuid: telem_trajectory_uuid,
+                                trace_id: telem_trace_id,
+                                is_agentic: true,
+                                stream_start: telem_stream_start,
+                                first_chunk_at: None, // OpenAI stream wrapper doesn't expose this
+                                stream_end: std::time::Instant::now(),
+                                success: true,
+                            }
+                        );
+                        Ok::<Bytes, String>(Bytes::new()) // empty, invisible to client
+                    })
+                );
+
                 if client_wants_stream {
                     // 客户端请求流式，返回 SSE
-                    let body = Body::from_stream(combined_stream);
+                    let body = Body::from_stream(combined_stream_with_metrics);
                     return Ok(Response::builder()
                         .header("Content-Type", "text/event-stream")
                         .header("Cache-Control", "no-cache")
@@ -459,7 +495,7 @@ pub async fn handle_chat_completions(
                     // 收集流数据并聚合为 JSON
                     use crate::proxy::mappers::openai::collector::collect_stream_to_json;
 
-                    match collect_stream_to_json(Box::pin(combined_stream)).await {
+                    match collect_stream_to_json(Box::pin(combined_stream_with_metrics)).await {
                         Ok(full_response) => {
                             info!("[{}] ✓ Stream collected and converted to JSON", trace_id);
                             return Ok((

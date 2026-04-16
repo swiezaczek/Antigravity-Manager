@@ -200,6 +200,19 @@ pub static NATIVE_OAUTH_USER_AGENT: LazyLock<String> = LazyLock::new(|| {
     format!("antigravity/{} {} google-api-nodejs-client/10.3.0", CURRENT_VERSION.as_str(), platform_info) // [OPSEC v4.1.32] Synced with CURRENT_VERSION
 });
 
+/// Platform identifier for telemetry metadata (matches Go LS format: "WINDOWS_AMD64", "MAC_ARM64", etc.)
+pub static CURRENT_PLATFORM: LazyLock<String> = LazyLock::new(|| {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("windows", "x86_64") => "WINDOWS_AMD64",
+        ("windows", _) => "WINDOWS_ARM64",
+        ("macos", "aarch64") => "MAC_ARM64",
+        ("macos", _) => "MAC_AMD64",
+        ("linux", "x86_64") => "LINUX_AMD64",
+        ("linux", _) => "LINUX_ARM64",
+        _ => "LINUX_AMD64",
+    }.to_string()
+});
+
 /// Short User-Agent for OAuth token exchange (no antigravity/ prefix)
 /// Official client sends ONLY "google-api-nodejs-client/10.3.0" to /token endpoint
 pub static OAUTH_SHORT_UA: LazyLock<String> = LazyLock::new(|| {

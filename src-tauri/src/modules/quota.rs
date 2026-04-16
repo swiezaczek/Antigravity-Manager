@@ -165,6 +165,15 @@ async fn fetch_project_id(access_token: &str, email: &str, account_id: Option<&s
                             .send()
                             .await;
                         crate::modules::logger::log_info(&format!("🚀 [{}] Dyskretnie sfinalizowano Onboarding (Faza 4 w API)", email_clone));
+
+                        // [OPSEC v4.1.33] Emulate missing fetchUserInfo (Rozbieżnosc 5)
+                        let user_info_headers = crate::utils::http::google_api_headers(&access_token_clone);
+                        let _ = client_clone.post(format!("{}/v1internal:fetchUserInfo", CLOUD_CODE_BASE_URL))
+                            .headers(user_info_headers)
+                            .json(&json!({}))
+                            .send()
+                            .await;
+                        crate::modules::logger::log_info(&format!("👤 [{}] Sfinalizowano fetchUserInfo (Rozbieżność 5)", email_clone));
                     });
                     
                     // Core logic: Multi-level fallback for tier extraction

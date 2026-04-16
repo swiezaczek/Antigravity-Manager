@@ -723,6 +723,30 @@ fn apply_spoofed_env(cmd: &mut std::process::Command, account_id: Option<&str>) 
             "[Zero-Emission] Mocked OS identity | USER: {} | HOST: {}",
             username, computername
         ));
+
+        // [MITM v7] Route ALL IDE HTTPS traffic through our forward proxy
+        if let Some(mitm_port) = crate::proxy::mitm::get_mitm_port() {
+            let proxy_url = format!("http://127.0.0.1:{}", mitm_port);
+            cmd.env("HTTPS_PROXY", &proxy_url);
+            cmd.env("HTTP_PROXY", &proxy_url);
+            cmd.env("https_proxy", &proxy_url);
+            cmd.env("http_proxy", &proxy_url);
+            cmd.env("NO_PROXY", "127.0.0.1,localhost");
+            cmd.env("no_proxy", "127.0.0.1,localhost");
+
+            // Trust our MITM CA cert
+            if let Some(ca_path) = crate::proxy::mitm::get_ca_cert_path() {
+                // NODE_EXTRA_CA_CERTS: Node.js reads this to add extra CA certs
+                cmd.env("NODE_EXTRA_CA_CERTS", &ca_path);
+                // SSL_CERT_FILE: Go LS reads this for TLS trust
+                cmd.env("SSL_CERT_FILE", &ca_path);
+            }
+
+            crate::modules::logger::log_info(&format!(
+                "[MITM] IDE will route through forward proxy at {}",
+                proxy_url
+            ));
+        }
     }
 }
 
