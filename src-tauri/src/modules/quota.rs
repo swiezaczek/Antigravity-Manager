@@ -140,7 +140,16 @@ async fn fetch_project_id(access_token: &str, email: &str, account_id: Option<&s
         Ok(res) => {
             if res.status().is_success() {
                 if let Ok(data) = res.json::<LoadProjectResponse>().await {
-                    let project_id = data.project_id.clone();
+                    let mut project_id = data.project_id.clone();
+                    
+                    // [OPSEC] Zabezpieczenie przed błędem Macro-Linker / Identity Collisions
+                    // Usuwamy nieprawidłowe powiązania projektów, które wywołują pętle 403 / 429
+                    if let Some(pid) = &project_id {
+                        if pid == "macro-linker-26f3p" || pid == "681255809395" {
+                            crate::modules::logger::log_warn(&format!("⚠️ [{}] Zidentyfikowano wrogi projekt ({}). Ignoruję i wymuszam przepływ 'individual' dla ochrony konta Pro.", email, pid));
+                            project_id = None; // Omijamy ten projekt, wymuszając g1-pro-tier fallback
+                        }
+                    }
                     
                     // [OPSEC] Dyskretnie uruchom onboardUser w tle (Faza 4), aby naśladować natywnego klienta Node.js
                     let access_token_clone = access_token.to_string();

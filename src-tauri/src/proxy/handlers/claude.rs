@@ -834,6 +834,22 @@ pub async fn handle_messages(
             debug_logger::write_debug_payload(&debug_cfg, Some(&trace_id), "v1internal_request", &payload).await;
         }
         
+    // ===== [OPSEC] NOWY ANTI-BOT JITTER (PRZECIWDZIAŁANIE GHOST LOCKOUT) =====
+    // Zwalniamy automatyczny/ciągły ruch, symulując pracę ludzką ("Interactive Development").
+    // OpenClaw generował obciążenie serwera tak duże, że Google nakładało 7-dniowe blokady.
+    // Jeśli to background_task (np. agent), dajemy długie losowe opóźnienie.
+    if let Some(_) = background_task_type {
+        use rand::Rng;
+        let delay_ms = rand::thread_rng().gen_range(3000..=8500);
+        info!("[{}] 🛡️ [Anti-Bot Jitter] Background agent. Delay: {}ms...", trace_id, delay_ms);
+        tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
+    } else {
+        use rand::Rng;
+        let delay_ms = rand::thread_rng().gen_range(800..=1500);
+        info!("[{}] 🛡️ [Anti-Bot Jitter] Interactive chat. Delay: {}ms...", trace_id, delay_ms);
+        tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
+    }
+        
     // 4. 上游调用 - 自动转换逻辑
     let client_wants_stream = request.stream;
 

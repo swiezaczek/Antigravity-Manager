@@ -62,6 +62,13 @@ pub async fn fetch_project_id(access_token: &str) -> Result<String, String> {
     // 提取 cloudaicompanionProject
     if let Some(project_id) = data.get("cloudaicompanionProject")
         .and_then(|v| v.as_str()) {
+        
+        // [OPSEC] Zabezpieczenie przed błędem Macro-Linker / Identity Collisions
+        if project_id == "macro-linker-26f3p" || project_id == "681255809395" {
+             tracing::warn!("Zidentyfikowano wrogi projekt ({}). Odmawiam przypisania w celu ochrony konta Pro.", project_id);
+             return Err("Phantom project ID detected, enforcing individual routing.".to_string());
+        }
+            
         return Ok(project_id.to_string());
     }
     

@@ -219,6 +219,59 @@ async fn handle_tunneled_request(
             tls_stream.flush().await?;
             Ok(keep_alive)
         }
+        rules::Action::RouteToAxum => {
+            tracing::info!("[MITM] 🔀 Routing to local Axum proxy: {}", path);
+            let app_port = crate::modules::config::load_app_config()
+                .ok()
+                .map(|c| c.proxy.port)
+                .unwrap_or(3000);
+            
+            let mut rewritten_path = path.to_string();
+            // Map v1internal to Axum's v1beta path structure so it's intercepted by Axum routers
+            if path.contains("streamGenerateContent") || path.contains("generateContent") {
+                rewritten_path = format!("/v1beta/models{}", path);
+            }
+
+            let local_host = format!("127.0.0.1:{}", app_port);
+            let mut request = format!("{} {} HTTP/1.1\r\n", method, rewritten_path);
+            
+            for h in headers {
+                if h.to_lowercase().starts_with("host:") {
+                    request.push_str(&format!("Host: {}\r\n", local_host));
+                } else {
+                    request.push_str(&h);
+                    request.push_str("\r\n");
+                }
+            }
+            request.push_str("\r\n");
+
+            let mut tcp = TcpStream::connect(&local_host).await?;
+            tcp.write_all(request.as_bytes()).await?;
+            if !body.is_empty() {
+                tcp.write_all(&body).await?;
+            }
+            tcp.flush().await?;
+
+            let mut response = Vec::new();
+            let mut buf = [0u8; 8192];
+            loop {
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(300),
+                    tcp.read(&mut buf),
+                )
+                .await
+                {
+                    Ok(Ok(0)) => break,
+                    Ok(Ok(n)) => response.extend_from_slice(&buf[..n]),
+                    Ok(Err(_)) => break,
+                    Err(_) => break,
+                }
+            }
+            
+            tls_stream.write_all(&response).await?;
+            tls_stream.flush().await?;
+            Ok(keep_alive)
+        }
     }
 }
 

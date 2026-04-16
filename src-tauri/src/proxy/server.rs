@@ -417,6 +417,7 @@ impl AxumServer {
             )
             // Gemini Protocol (Native)
             .route("/v1beta/models", get(handlers::gemini::handle_list_models))
+            .route("/v1internal:fetchAvailableModels", post(handlers::gemini::handle_list_models))
             // Handle both GET (get info) and POST (generateContent with colon) at the same route
             .route(
                 "/v1beta/models/:model",

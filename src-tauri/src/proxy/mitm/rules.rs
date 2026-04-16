@@ -14,6 +14,8 @@ pub enum Action {
     Drop,
     /// Rewrite native metrics/trajectory payload dynamically (e.g. mapping to pooled account).
     RewriteAgentTelemetry,
+    /// Route the request to the local Antigravity wrapper (Axum server on port 3000) for AI feature proxying
+    RouteToAxum,
 }
 
 /// Evaluate a request and decide what to do with it.
@@ -23,10 +25,13 @@ pub enum Action {
 /// - Both Native `recordCodeAssistMetrics` and `recordTrajectoryAnalytics` are intercepted
 /// - MITM will parse the trajectoryId, lookup the proxy-allocated token, and rewrite it
 pub fn evaluate(host: &str, path: &str) -> Action {
-    if host.contains("cloudcode-pa.googleapis.com")
-        && (path.contains("recordCodeAssistMetrics") || path.contains("recordTrajectoryAnalytics"))
-    {
-        return Action::RewriteAgentTelemetry;
+    if host.contains("cloudcode-pa.googleapis.com") {
+        if path.contains("recordCodeAssistMetrics") || path.contains("recordTrajectoryAnalytics") {
+            return Action::RewriteAgentTelemetry;
+        } else if path.contains("streamGenerateContent") || path.contains("generateContent") || path.contains("fetchAvailableModels") {
+            // [FIX] Forward Filar 1 Native AI traffic to the local proxy (Claude/OpenAI wrapping)
+            return Action::RouteToAxum;
+        }
     }
 
     // PASS: Everything else (OAuth, Unleash, fetchUserInfo...)
