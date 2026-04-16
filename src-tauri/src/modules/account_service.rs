@@ -77,6 +77,10 @@ impl AccountService {
             "[Service] Added/Updated account: {}",
             account.email
         ));
+
+        // [FIX] Force Filar 0 sync to inject SQLite token, bypassing signed-out state in IDE
+        let _ = self.switch_account(&account.id).await;
+
         Ok(account)
     }
 
@@ -177,6 +181,9 @@ impl AccountService {
 
         // 发送 UI 更新通知 (通过 integration)
         self.integration.update_tray();
+
+        // [FIX] Explicitly sync the new token to IDE database to prevent broken "Signed Out" states
+        let _ = self.switch_account(&account.id).await;
 
         Ok(account)
     }
