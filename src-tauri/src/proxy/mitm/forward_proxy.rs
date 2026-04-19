@@ -87,10 +87,11 @@ async fn handle_client(
         .await?;
 
     // [MITM v7] Selective TLS Interception
-    // Only intercept cloudcode-pa.googleapis.com (for telemetry/metrics manipulation).
+    // Only intercept cloudcode-pa.googleapis.com (for telemetry/metrics manipulation)
+    // and play.googleapis.com (to intercept and DROP Clearcut hardware metrics).
     // Everything else (oauth, unleash) passes purely as a raw TCP tunnel to avoid TLS fingerprinting
     // and HTTP parsing timeouts.
-    if !host.contains("cloudcode-pa.googleapis.com") {
+    if !host.contains("cloudcode-pa.googleapis.com") && !host.contains("play.googleapis.com") {
         let addr = format!("{}:{}", host, port);
         match TcpStream::connect(&addr).await {
             Ok(mut upstream) => {
@@ -405,10 +406,14 @@ fn rewrite_agent_telemetry(mut headers: Vec<String>, body: Vec<u8>) -> (Vec<Stri
             let body_mb = body.len() as f64 / 1024.0 / 1024.0;
             tracing::info!("[MITM] ✓ Rewritten telemetry ({:.2}MB) for trajectory {} mapping to proxy project id {}", body_mb, uuid, proxy_token.project_id);
 
-            // Replace Authorization header
+            // Replace Authorization header while preserving original casing
             for h in headers.iter_mut() {
                 if h.to_lowercase().starts_with("authorization:") {
-                    *h = format!("Authorization: Bearer {}", proxy_token.access_token);
+                    if let Some((prefix, _)) = h.split_once(':') {
+                        *h = format!("{}: Bearer {}", prefix, proxy_token.access_token);
+                    } else {
+                        *h = format!("Authorization: Bearer {}", proxy_token.access_token);
+                    }
                 }
             }
 
@@ -419,12 +424,39 @@ fn rewrite_agent_telemetry(mut headers: Vec<String>, body: Vec<u8>) -> (Vec<Stri
                 }
             }
 
+            // [OPSEC] Deep scrub of correlation fingerprints in Telemetry
+            fn scrub_red_flags(v: &mut serde_json::Value) {
+                if let Some(obj) = v.as_object_mut() {
+                    let bad_keys = [
+                        "machineId", "macAddress", "os", "osInfo", "osVersion", 
+                        "hardware", "network", "clientVersion", "vscodeSessionId", 
+                        "sessionId", "filePath", "fileName", "workspacePath", 
+                        "repository", "remoteUrl", "gitHash"
+                    ];
+                    for key in bad_keys.iter() {
+                        obj.remove(*key);
+                    }
+                    for value in obj.values_mut() {
+                        scrub_red_flags(value);
+                    }
+                } else if let Some(arr) = v.as_array_mut() {
+                    for item in arr.iter_mut() {
+                        scrub_red_flags(item);
+                    }
+                }
+            }
+            scrub_red_flags(&mut json_val);
+
             let new_body = serde_json::to_vec(&json_val).unwrap_or(body);
             
-            // Recompute content-length header
+            // Recompute content-length header while preserving original casing
             for h in headers.iter_mut() {
                 if h.to_lowercase().starts_with("content-length:") {
-                    *h = format!("Content-Length: {}", new_body.len());
+                    if let Some((prefix, _)) = h.split_once(':') {
+                        *h = format!("{}: {}", prefix, new_body.len());
+                    } else {
+                        *h = format!("Content-Length: {}", new_body.len());
+                    }
                 }
             }
 

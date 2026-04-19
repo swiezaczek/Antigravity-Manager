@@ -32,6 +32,9 @@ pub fn evaluate(host: &str, path: &str) -> Action {
             // [FIX] Forward Filar 1 Native AI traffic to the local proxy (Claude/OpenAI wrapping)
             return Action::RouteToAxum;
         }
+    } else if host.contains("play.googleapis.com") {
+        // [OPSEC] Drop Clearcut telemetry silently to prevent hardware fingerprint correlation
+        return Action::Drop;
     }
 
     // PASS: Everything else (OAuth, Unleash, fetchUserInfo...)
@@ -41,6 +44,14 @@ pub fn evaluate(host: &str, path: &str) -> Action {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_drop_clearcut_telemetry() {
+        assert!(matches!(
+            evaluate("play.googleapis.com", "/log"),
+            Action::Drop
+        ));
+    }
 
     #[test]
     fn test_rewrite_agent_telemetry() {
