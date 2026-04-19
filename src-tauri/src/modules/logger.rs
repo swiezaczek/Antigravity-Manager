@@ -60,7 +60,7 @@ pub fn init_logger() {
 
     // 4. Set filtering layer (default to INFO level to reduce log size)
     let filter_layer = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info"));
+        .unwrap_or_else(|_| EnvFilter::new("info,antigravity_tools_lib::proxy::mitm::forward_proxy=debug"));
 
     // 6. Log bridge layer
     let bridge_layer = crate::modules::log_bridge::TauriLogBridgeLayer::new();

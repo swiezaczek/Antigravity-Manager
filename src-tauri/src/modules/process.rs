@@ -739,13 +739,19 @@ fn apply_spoofed_env(cmd: &mut std::process::Command, account_id: Option<&str>) 
             // it only respects the --proxy-server command-line flag or system proxy settings.
             // Without this, the IDE's main process and Go LS never route through MITM.
             cmd.arg(format!("--proxy-server=http://127.0.0.1:{}", mitm_port));
+            cmd.arg("--proxy-bypass-list=127.0.0.1,localhost,::1");
 
             // Trust our MITM CA cert
             if let Some(ca_path) = crate::proxy::mitm::get_ca_cert_path() {
                 // NODE_EXTRA_CA_CERTS: Node.js reads this to add extra CA certs
                 cmd.env("NODE_EXTRA_CA_CERTS", &ca_path);
-                // SSL_CERT_FILE: Go LS reads this for TLS trust
-                cmd.env("SSL_CERT_FILE", &ca_path);
+                
+                #[cfg(not(target_os = "windows"))]
+                {
+                    // SSL_CERT_FILE: Go LS reads this for TLS trust (only needed safely on non-Windows)
+                    cmd.env("SSL_CERT_FILE", &ca_path);
+                }
+                
                 // [MITM v8] Also set REQUESTS_CA_BUNDLE for Python-based tools
                 cmd.env("REQUESTS_CA_BUNDLE", &ca_path);
             }

@@ -96,7 +96,7 @@ impl CertificateAuthority {
     /// Generate a new self-signed CA.
     fn generate_new() -> Result<Self, String> {
         let key_pair =
-            KeyPair::generate().map_err(|e| format!("CA key generation failed: {}", e))?;
+            KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).map_err(|e| format!("CA key generation failed: {}", e))?;
 
         let params = build_ca_params();
         let ca_cert = params
@@ -188,7 +188,7 @@ impl CertificateAuthority {
     /// Generate a ServerConfig with a certificate valid for the given hostname.
     fn generate_host_config(&self, hostname: &str) -> Result<rustls::ServerConfig, String> {
         let host_key =
-            KeyPair::generate().map_err(|e| format!("Host key gen: {}", e))?;
+            KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).map_err(|e| format!("Host key gen: {}", e))?;
 
         let mut host_params = CertificateParams::default();
         let mut dn = DistinguishedName::new();
@@ -236,7 +236,7 @@ fn get_ca_dir() -> PathBuf {
 /// Get paths for CA cert and key files.
 fn get_ca_paths() -> (PathBuf, PathBuf) {
     let dir = get_ca_dir();
-    (dir.join("mitm-ca.pem"), dir.join("mitm-ca-key.pem"))
+    (dir.join("mitm-ca-v2.pem"), dir.join("mitm-ca-key-v2.pem"))
 }
 
 /// Get the CA cert path as a String (for env vars).
