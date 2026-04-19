@@ -107,6 +107,11 @@ fn greet(name: &str) -> String {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // [FIX] rustls >= 0.23 requires explicit process-level crypto provider installation
+    // if reqwest or other dependencies don't do it automatically.
+    // 'ring' is pulled via tokio-rustls default features.
+    let _ = tokio_rustls::rustls::crypto::ring::default_provider().install_default();
+
     // Check for headless mode
     let args: Vec<String> = std::env::args().collect();
     let is_headless = args.iter().any(|arg| arg == "--headless");
