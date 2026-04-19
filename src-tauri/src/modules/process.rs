@@ -734,16 +734,24 @@ fn apply_spoofed_env(cmd: &mut std::process::Command, account_id: Option<&str>) 
             cmd.env("NO_PROXY", "127.0.0.1,localhost");
             cmd.env("no_proxy", "127.0.0.1,localhost");
 
+            // [MITM v8] Force Electron/Chromium to use our proxy.
+            // Chromium on Windows ignores HTTPS_PROXY env vars entirely —
+            // it only respects the --proxy-server command-line flag or system proxy settings.
+            // Without this, the IDE's main process and Go LS never route through MITM.
+            cmd.arg(format!("--proxy-server=http://127.0.0.1:{}", mitm_port));
+
             // Trust our MITM CA cert
             if let Some(ca_path) = crate::proxy::mitm::get_ca_cert_path() {
                 // NODE_EXTRA_CA_CERTS: Node.js reads this to add extra CA certs
                 cmd.env("NODE_EXTRA_CA_CERTS", &ca_path);
                 // SSL_CERT_FILE: Go LS reads this for TLS trust
                 cmd.env("SSL_CERT_FILE", &ca_path);
+                // [MITM v8] Also set REQUESTS_CA_BUNDLE for Python-based tools
+                cmd.env("REQUESTS_CA_BUNDLE", &ca_path);
             }
 
             crate::modules::logger::log_info(&format!(
-                "[MITM] IDE will route through forward proxy at {}",
+                "[MITM] IDE will route through forward proxy at {} (--proxy-server enforced)",
                 proxy_url
             ));
         }

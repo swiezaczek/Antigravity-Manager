@@ -31,8 +31,8 @@ impl SystemIntegration for DesktopIntegration {
         }
         
         // [Zero-Emission V3] 2.5 清除 Identity 残留物 (Cookies, auth-tokens 等)
-        crate::modules::logger::log_info("[Desktop] Executing Zero-Emission cache purge...");
-        let _ = crate::modules::cache::clear_antigravity_cache(None);
+        // crate::modules::logger::log_info("[Desktop] Executing Zero-Emission cache purge...");
+        // let _ = crate::modules::cache::clear_antigravity_cache(None);
 
         // 3. 写入设备 Profile
         if let Some(ref profile) = account.device_profile {
