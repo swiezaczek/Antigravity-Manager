@@ -358,5 +358,14 @@ pub fn create_string_value_payload(value: &str) -> Vec<u8> {
 /// Antigravity 的认证链路要求 `uss-userStatus` 里至少存在 sentinel key；
 /// 账号展示和会话绑定依赖名字和邮箱，因此这里写入最小身份信息即可。
 pub fn create_minimal_user_status_payload(email: &str) -> Vec<u8> {
-    [encode_string_field(3, email), encode_string_field(7, email)].concat()
+    // Generate a pseudo-random length-18 string based on the email as a mock GAIA ID.
+    // Real GAIA IDs are numeric strings usually starting with 1. We just hash the email loosely.
+    let gaia_mock = format!("100{:015}", email.len() * 1234567);
+    
+    [
+        encode_string_field(1, &gaia_mock), // GAIA ID
+        encode_string_field(3, email),      // Display Name
+        encode_string_field(7, email),      // Email
+    ]
+    .concat()
 }
