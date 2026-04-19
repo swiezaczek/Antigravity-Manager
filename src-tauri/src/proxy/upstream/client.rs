@@ -330,10 +330,12 @@ impl UpstreamClient {
 
         // 遍历所有端点，失败时自动切换
         // [OPSEC] For loadCodeAssist, prefer the secondary endpoint that is known to work
-        let fallbacks = if method == "loadCodeAssist" {
-            &[V1_INTERNAL_BASE_URL_FALLBACKS[1], V1_INTERNAL_BASE_URL_FALLBACKS[0]]
+        let fallbacks_override;
+        let fallbacks: &[&str] = if method == "loadCodeAssist" {
+            fallbacks_override = [V1_INTERNAL_BASE_URL_FALLBACKS[1], V1_INTERNAL_BASE_URL_FALLBACKS[0]];
+            &fallbacks_override
         } else {
-            V1_INTERNAL_BASE_URL_FALLBACKS
+            &V1_INTERNAL_BASE_URL_FALLBACKS
         };
 
         for (idx, base_url) in fallbacks.iter().enumerate() {
@@ -357,6 +359,7 @@ impl UpstreamClient {
             };
 
             let response = req
+                .send()
                 .await;
 
             match response {
