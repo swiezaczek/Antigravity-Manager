@@ -308,36 +308,10 @@ impl UpstreamClient {
         );
 
         // [ENHANCED] 注入 Antigravity 官方客户端关键特征 Headers
-        // 1. Client Identity
-        headers.insert(
-            "x-client-name",
-            header::HeaderValue::from_static("antigravity"),
-        );
-        if let Ok(ver) = header::HeaderValue::from_str(&crate::constants::CURRENT_VERSION) {
-            headers.insert("x-client-version", ver);
-        }
+        // [OPSEC] 1. Zero-Emission: Do NOT inject x-client-name, x-client-version, x-machine-id, x-vscode-sessionid.
+        // Google does not expect them from standard loadCodeAssist/REST traffic.
+        // Also removed x-goog-user-project injection.
 
-        // 2. Device & Session Identity
-        // Machine ID (Persistent)
-        if let Ok(mid) = machine_uid::get() {
-             if let Ok(mid_val) = header::HeaderValue::from_str(&mid) {
-                 headers.insert("x-machine-id", mid_val);
-             }
-        }
-        // Session ID (Per App Launch)
-        if let Ok(sess_val) = header::HeaderValue::from_str(&crate::constants::SESSION_ID) {
-            headers.insert("x-vscode-sessionid", sess_val);
-        }
-
-        // [NEW] 深度解析 body 中的 project_id 并注入 Header
-        // 只有当 Body 包含 project 字段且非测试项目时，注入 x-goog-user-project
-        if let Some(proj) = body.get("project").and_then(|v| v.as_str()) {
-            if !proj.is_empty() && proj != "test-project" && proj != "project-id" {
-                if let Ok(hv) = header::HeaderValue::from_str(proj) {
-                    headers.insert("x-goog-user-project", hv);
-                }
-            }
-        }
         // 注入额外的 Headers (如 anthropic-beta)
         for (k, v) in extra_headers {
             if let Ok(hk) = header::HeaderName::from_bytes(k.as_bytes()) {
@@ -355,21 +329,34 @@ impl UpstreamClient {
         let mut fallback_attempts: Vec<FallbackAttemptLog> = Vec::new();
 
         // 遍历所有端点，失败时自动切换
-        for (idx, base_url) in V1_INTERNAL_BASE_URL_FALLBACKS.iter().enumerate() {
+        // [OPSEC] For loadCodeAssist, prefer the secondary endpoint that is known to work
+        let fallbacks = if method == "loadCodeAssist" {
+            &[V1_INTERNAL_BASE_URL_FALLBACKS[1], V1_INTERNAL_BASE_URL_FALLBACKS[0]]
+        } else {
+            V1_INTERNAL_BASE_URL_FALLBACKS
+        };
+
+        for (idx, base_url) in fallbacks.iter().enumerate() {
             let url = Self::build_url(base_url, method, query_string);
-            let has_next = idx + 1 < V1_INTERNAL_BASE_URL_FALLBACKS.len();
+            let has_next = idx + 1 < fallbacks.len();
 
             let body_bytes = serde_json::to_vec(&body).map_err(|e| e.to_string())?;
+            let is_sse = query_string.unwrap_or("").contains("alt=sse");
 
-            let response = client
-                .post(&url)
-                .headers(headers.clone())
-                // [NEW] 强制分块传输仿真: 包装为流以触发 Transfer-Encoding: chunked
-                // 这对齐了官方 Go Worker 通过遮蔽 Content-Length 来模拟 IDE 流量的行为
-                .body(rquest::Body::wrap_stream(futures::stream::once(async move { 
-                    Ok::<_, std::io::Error>(body_bytes) 
+            let mut req = client.post(&url).headers(headers.clone());
+            
+            // [OPSEC] Content-Length is STRICTLY required for non-SSE requests.
+            // Transfer-Encoding: chunked is ONLY used for streaming.
+            req = if is_sse {
+                let bytes_clone = body_bytes.clone();
+                req.body(rquest::Body::wrap_stream(futures::stream::once(async move {
+                    Ok::<_, std::io::Error>(bytes_clone)
                 })))
-                .send()
+            } else {
+                req.body(body_bytes.clone())
+            };
+
+            let response = req
                 .await;
 
             match response {

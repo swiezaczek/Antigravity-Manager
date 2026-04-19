@@ -439,6 +439,34 @@ pub async fn start_oauth_flow(app_handle: Option<tauri::AppHandle>, oauth_client
         *lock = None;
     }
 
+    // [HOUSEKEEPING] Prune old oauth_jars profiles to prevent disk bloat.
+    // Each ephemeral Chrome profile is ~50-100MB. These are one-shot throwaway
+    // containers used only during login — they're never reused. Keep only the
+    // most recent one (in case Chrome is still writing to it in the background).
+    if let Some(local_data) = dirs::data_local_dir() {
+        let jars_dir = local_data.join("Antigravity-Manager").join("oauth_jars");
+        if jars_dir.exists() {
+            tokio::task::spawn_blocking(move || {
+                if let Ok(entries) = std::fs::read_dir(&jars_dir) {
+                    let mut dirs: Vec<_> = entries
+                        .filter_map(|e| e.ok())
+                        .filter(|e| e.path().is_dir())
+                        .collect();
+                    // Sort by name descending (names are timestamps, so newest first)
+                    dirs.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+                    // Remove all but the most recent one
+                    for old_dir in dirs.into_iter().skip(1) {
+                        if let Err(e) = std::fs::remove_dir_all(old_dir.path()) {
+                            tracing::warn!("Failed to clean old oauth_jar {:?}: {}", old_dir.path(), e);
+                        } else {
+                            tracing::info!("Cleaned old oauth_jar: {:?}", old_dir.path());
+                        }
+                    }
+                }
+            });
+        }
+    }
+
     oauth::exchange_code_with_client(&code, &redirect_uri, Some(&client_key)).await
 }
 

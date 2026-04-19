@@ -60,7 +60,7 @@ pub fn get_long_standard_client() -> Client {
 /// Ordering matches MITM capture of Node.js gaxios client.
 pub fn google_api_headers(access_token: &str) -> HeaderMap {
     let ua = crate::constants::NATIVE_OAUTH_USER_AGENT.as_str();
-    let mut h = HeaderMap::with_capacity(7);
+    let mut h = HeaderMap::with_capacity(6);
     h.insert(HeaderName::from_static("accept"), HeaderValue::from_static("*/*"));
     h.insert(HeaderName::from_static("accept-encoding"), HeaderValue::from_static("gzip, deflate, br"));
     h.insert(
@@ -73,7 +73,7 @@ pub fn google_api_headers(access_token: &str) -> HeaderMap {
         HeaderName::from_static("user-agent"),
         HeaderValue::from_str(ua).unwrap_or_else(|_| HeaderValue::from_static("google-api-nodejs-client/10.3.0")),
     ); // [OPSEC] Wektor T Fallback CleanUp
-    h.insert(HeaderName::from_static("x-goog-api-client"), HeaderValue::from_static("vscode_cloudshelleditor/1.22.2 gl-node/22.21.1"));
+    h.insert(HeaderName::from_static("x-goog-api-client"), HeaderValue::from_static("gl-node/22.21.1"));
     h.insert(HeaderName::from_static("connection"), HeaderValue::from_static("keep-alive"));
     h
 }
@@ -83,7 +83,15 @@ pub fn google_api_headers(access_token: &str) -> HeaderMap {
 /// Go LS uses a minimal subset of headers.
 pub fn go_ls_api_headers(access_token: &str) -> HeaderMap {
     // Note: No "google-api-nodejs-client" in Go LS UA!
-    let ua_str = format!("antigravity/{} windows/amd64", crate::constants::CURRENT_VERSION.as_str());
+    let os = std::env::consts::OS;
+    let arch = match std::env::consts::ARCH {
+        "x86_64" => "amd64",
+        "aarch64" => "arm64",
+        "arm" => "arm",
+        "x86" => "386",
+        other => other,
+    };
+    let ua_str = format!("antigravity/{} {}/{}", crate::constants::CURRENT_VERSION.as_str(), os, arch);
     
     let mut h = HeaderMap::with_capacity(4);
     h.insert(HeaderName::from_static("accept-encoding"), HeaderValue::from_static("gzip"));
@@ -109,14 +117,14 @@ pub fn google_oauth_headers() -> HeaderMap {
     // [OPSEC v4.1.32] OAuth token exchange uses SHORT UA (no antigravity/ prefix)
     // Official gaxios sends only "google-api-nodejs-client/10.3.0" to /token
     let ua = crate::constants::OAUTH_SHORT_UA.as_str();
-    let mut h = HeaderMap::with_capacity(4);
+    let mut h = HeaderMap::with_capacity(5);
     h.insert(HeaderName::from_static("accept"), HeaderValue::from_static("*/*"));
     h.insert(HeaderName::from_static("accept-encoding"), HeaderValue::from_static("gzip, deflate, br"));
     h.insert(
         HeaderName::from_static("user-agent"),
         HeaderValue::from_str(ua).unwrap_or_else(|_| HeaderValue::from_static("google-api-nodejs-client/10.3.0")),
     );
-    h.insert(HeaderName::from_static("x-goog-api-client"), HeaderValue::from_static("vscode_cloudshelleditor/1.22.2 gl-node/22.21.1")); // [OPSEC] Wektor O: auth sync
+    h.insert(HeaderName::from_static("x-goog-api-client"), HeaderValue::from_static("gl-node/22.21.1")); // [OPSEC] Wektor O: auth sync
     h.insert(HeaderName::from_static("connection"), HeaderValue::from_static("keep-alive")); // [OPSEC] Wektor O: keep-alive sync
     h
 }
@@ -125,8 +133,9 @@ pub fn google_oauth_headers() -> HeaderMap {
 /// No Content-Type (GET has no body). No x-goog-api-client.
 pub fn google_get_headers(access_token: &str) -> HeaderMap {
     let ua = crate::constants::NATIVE_OAUTH_USER_AGENT.as_str();
-    let mut h = HeaderMap::with_capacity(5);
+    let mut h = HeaderMap::with_capacity(6);
     h.insert(HeaderName::from_static("accept"), HeaderValue::from_static("*/*"));
+    h.insert(HeaderName::from_static("accept-encoding"), HeaderValue::from_static("gzip, deflate, br"));
     h.insert(
         HeaderName::from_static("authorization"),
         HeaderValue::from_str(&format!("Bearer {}", access_token))
@@ -136,8 +145,7 @@ pub fn google_get_headers(access_token: &str) -> HeaderMap {
         HeaderName::from_static("user-agent"),
         HeaderValue::from_str(ua).unwrap_or_else(|_| HeaderValue::from_static("google-api-nodejs-client/10.3.0")),
     ); // [OPSEC] Wektor T Fallback CleanUp
-    h.insert(HeaderName::from_static("x-goog-api-client"), HeaderValue::from_static("vscode_cloudshelleditor/1.22.2 gl-node/22.21.1")); // [OPSEC] Wektor O: api sync
-    h.insert(HeaderName::from_static("accept-encoding"), HeaderValue::from_static("gzip, deflate, br"));
+    h.insert(HeaderName::from_static("x-goog-api-client"), HeaderValue::from_static("gl-node/22.21.1")); // [OPSEC] Wektor O: api sync
     h.insert(HeaderName::from_static("connection"), HeaderValue::from_static("keep-alive")); // [OPSEC] Wektor O: keep-alive sync
     h
 }
