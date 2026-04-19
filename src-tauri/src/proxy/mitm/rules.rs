@@ -28,7 +28,7 @@ pub fn evaluate(host: &str, path: &str) -> Action {
     if host.contains("cloudcode-pa.googleapis.com") {
         if path.contains("recordCodeAssistMetrics") || path.contains("recordTrajectoryAnalytics") {
             return Action::RewriteAgentTelemetry;
-        } else if path.contains("streamGenerateContent") || path.contains("generateContent") || path.contains("fetchAvailableModels") {
+        } else if path.contains("streamGenerateContent") || path.contains("generateContent") {
             // [FIX] Forward Filar 1 Native AI traffic to the local proxy (Claude/OpenAI wrapping)
             return Action::RouteToAxum;
         }
@@ -68,13 +68,13 @@ mod tests {
     }
 
     #[test]
-    fn test_pass_generate_content() {
+    fn test_route_generate_content() {
         assert!(matches!(
             evaluate(
                 "cloudcode-pa.googleapis.com",
                 "/v1internal:streamGenerateContent"
             ),
-            Action::Pass
+            Action::RouteToAxum
         ));
     }
 

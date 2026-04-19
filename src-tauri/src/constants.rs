@@ -11,7 +11,7 @@ const CHANGELOG_URL: &str = "https://antigravity.google/changelog";
 
 /// Known stable configuration (for Docker/Headless fallback)
 /// Antigravity 4.1.32 uses Electron 39.2.3 which corresponds to Chrome 132.0.6834.160
-const KNOWN_STABLE_VERSION: &str = "4.1.32";
+const KNOWN_STABLE_VERSION: &str = "1.22.2";
 const KNOWN_STABLE_ELECTRON: &str = "39.2.3";
 const KNOWN_STABLE_CHROME: &str = "132.0.6834.160";
 
@@ -304,20 +304,19 @@ mod tests {
 
     #[test]
     fn test_known_stable_floor_is_up_to_date() {
-        // KNOWN_STABLE_VERSION must always be kept in sync with Cargo.toml.
-        // This test will fail and remind the developer to update it.
+        // KNOWN_STABLE_VERSION is the IDE floor, not the manager app version.
         assert!(
-            compare_semver(KNOWN_STABLE_VERSION, "4.1.22") > std::cmp::Ordering::Equal,
-            "KNOWN_STABLE_VERSION ({}) must be > 4.1.22; please sync with Cargo.toml",
+            compare_semver(KNOWN_STABLE_VERSION, "1.0.0") > std::cmp::Ordering::Equal,
+            "KNOWN_STABLE_VERSION ({}) must be > 1.0.0",
             KNOWN_STABLE_VERSION
         );
     }
 
     #[test]
     fn test_old_local_version_uses_floor() {
-        // Simulate: local = 4.1.20 (old), floor = 4.1.32
+        // Simulate: local = 1.0.0 (old), floor = 1.22.2
         // Expected: use floor
-        let local = "4.1.20";
+        let local = "1.0.0";
         let floor = KNOWN_STABLE_VERSION;
         let best = if compare_semver(local, floor) > std::cmp::Ordering::Equal {
             local
@@ -329,15 +328,15 @@ mod tests {
 
     #[test]
     fn test_newer_local_version_takes_priority() {
-        // Simulate: local = 4.1.32 (newer than floor), floor = 4.1.32
+        // Simulate: local = 1.23.0 (newer than floor), floor = 1.22.2
         // Expected: use local
-        let local = "4.1.32";
+        let local = "1.23.0";
         let floor = KNOWN_STABLE_VERSION;
         let best = if compare_semver(local, floor) >= std::cmp::Ordering::Equal {
             local
         } else {
             floor
         };
-        assert_eq!(best, "4.1.32");
+        assert_eq!(best, "1.23.0");
     }
 }
