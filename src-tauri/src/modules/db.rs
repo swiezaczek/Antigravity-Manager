@@ -284,3 +284,21 @@ fn inject_old_format(
     
     Ok("Token injection successful (old format)".to_string())
 }
+
+/// 注入 Service Machine ID 到数据库，解决 VS Code 缓存指纹不匹配导致 Token 失效的问题
+pub fn write_service_machine_id(db_path: &std::path::Path, service_machine_id: &str) -> Result<(), String> {
+    let conn = Connection::open(db_path).map_err(|e| format!("Failed to open database: {}", e))?;
+    
+    conn.execute(
+        "INSERT OR REPLACE INTO ItemTable (key, value) VALUES (?, ?)",
+        ["telemetry.serviceMachineId", service_machine_id],
+    )
+    .map_err(|e| format!("Failed to write serviceMachineId: {}", e))?;
+
+    crate::modules::logger::log_info(&format!(
+        "Successfully injected serviceMachineId: {}",
+        service_machine_id
+    ));
+    
+    Ok(())
+}

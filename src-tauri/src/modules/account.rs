@@ -1072,10 +1072,13 @@ async fn ensure_enterprise_project_ready(account: &mut Account) -> Result<(), St
             save_account(account)?;
             Ok(())
         }
-        Err(e) => Err(format!(
-            "Account {} cannot be switched safely: missing enterprise project_id and auto-resolve failed ({}). Please re-auth with a non-enterprise OAuth client or provide a valid project-enabled token.",
-            account.email, e
-        )),
+        Err(e) => {
+            crate::modules::logger::log_warn(&format!(
+                "Account {} is currently missing enterprise project_id and auto-resolve failed ({}). Allowing switch to proceed, but certain enterprise features may be limited.",
+                account.email, e
+            ));
+            Ok(())
+        }
     }
 }
 

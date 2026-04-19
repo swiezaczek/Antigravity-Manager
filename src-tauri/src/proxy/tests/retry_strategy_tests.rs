@@ -115,7 +115,7 @@ fn test_retry_strategy_400_no_signature() {
 fn test_rotate_account_true_cases() {
     for status in [429, 401, 403, 404, 500] {
         assert!(
-            should_rotate_account(status),
+            should_rotate_account(status, None),
             "Expected should_rotate_account({}) == true",
             status
         );
@@ -126,7 +126,7 @@ fn test_rotate_account_true_cases() {
 fn test_rotate_account_false_cases() {
     for status in [400, 503, 529, 200, 502] {
         assert!(
-            !should_rotate_account(status),
+            !should_rotate_account(status, None),
             "Expected should_rotate_account({}) == false",
             status
         );

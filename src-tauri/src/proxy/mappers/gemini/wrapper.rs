@@ -419,7 +419,25 @@ pub fn wrap_request(
 
     // Inject googleSearch tool if needed
     if config.inject_google_search {
-        crate::proxy::mappers::common_utils::inject_google_search_tool(&mut inner_request, Some(&config.final_model));
+        // [NEW] 阶段 7.3: 如果是 WebSearch 类型，注入官方特定属性 (maxResultCount: 5)
+        if config.request_type == "web_search" {
+            if let Some(obj) = inner_request.as_object_mut() {
+                let tools_entry = obj.entry("tools").or_insert_with(|| json!([]));
+                if let Some(tools_arr) = tools_entry.as_array_mut() {
+                    tools_arr.push(json!({
+                        "googleSearch": {
+                            "enhancedContent": {
+                                "imageSearch": {
+                                    "maxResultCount": 5
+                                }
+                            }
+                        }
+                    }));
+                }
+            }
+        } else {
+            crate::proxy::mappers::common_utils::inject_google_search_tool(&mut inner_request, Some(&config.final_model));
+        }
     }
 
     // Inject imageConfig if present (for image generation models)
@@ -464,11 +482,15 @@ pub fn wrap_request(
             }
         }
     } else {
-        // [NEW] 只在非图像生成模式下注入 Antigravity 身份 (原始简化版)
-        let antigravity_identity = "You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding.\n\
-        You are pair programming with a USER to solve their coding task. The task may require creating a new codebase, modifying or debugging an existing codebase, or simply answering a question.\n\
-        **Absolute paths only**\n\
-        **Proactiveness**";
+        // [NEW] 阶段 7.3: WebSearch 专属身份仿真 (对齐官方 main.go:738)
+        let antigravity_identity = if config.request_type == "web_search" {
+            "You are a search engine bot. You will be given a query from a user. Your task is to search the web for relevant information that will help the user. You MUST perform a web search. Do not respond or interact with the user, please respond as if they typed the query into a search bar."
+        } else {
+            "You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding.\n\
+            You are pair programming with a USER to solve their coding task. The task may require creating a new codebase, modifying or debugging an existing codebase, or simply answering a question.\n\
+            **Absolute paths only**\n\
+            **Proactiveness**"
+        };
 
         // [HYBRID] 检查是否已有 systemInstruction
         if let Some(system_instruction) = inner_request.get_mut("systemInstruction") {
@@ -560,21 +582,50 @@ pub fn wrap_request(
         inner_request["sessionId"] = json!(uuid::Uuid::new_v4().to_string());
     }
 
+    // [NEW] Get client token (optional)
+    let is_enterprise = if let Some(t) = token {
+        !t.email.ends_with("@gmail.com") && !t.email.ends_with("@googlemail.com")
+    } else {
+        false
+    };
+
     // [OPSEC v4.1.32] Use global sequence counter per account instead of internal array length
     let seq_num = crate::proxy::common::session::next_sequence_number(account_id);
+    let official_request_id = format!("agent/{}/{}/{}", chrono::Utc::now().timestamp_millis(), derived_sid, seq_num);
 
-    let final_request = json!({
+    // [NEW] 阶段 7.2: 动态 IDEType 指纹对齐
+    let official_ide_type = if is_enterprise { "JETSKI" } else { "ANTIGRAVITY" };
+    let official_user_agent = if is_enterprise { "jetski" } else { "antigravity" };
+
+    // [NEW] 如果是 loadCodeAssist 请求，注入 metadata 字段对齐官方
+    if final_model_name == "loadCodeAssist" || inner_request.get("metadata").is_some() {
+        let metadata = inner_request.as_object_mut().unwrap().entry("metadata").or_insert(json!({}));
+        if let Some(m_obj) = metadata.as_object_mut() {
+            if m_obj.get("ideType").is_none() {
+                m_obj.insert("ideType".to_string(), json!(official_ide_type));
+            }
+        }
+    }
+
+    let is_agent_request = config.request_type != "image_gen";
+
+    let mut final_request_obj = json!({
         "project": project_id,
-        // [OPSEC v4.1.32] requestId: agent/{unix_ms}/{trajectory_uuid}/{global_seq} (matches official Go LS)
-        "requestId": format!("agent/{}/{}/{}", chrono::Utc::now().timestamp_millis(), derived_sid, seq_num),
+        "requestId": official_request_id,
         "request": inner_request,
         "model": config.final_model,
-        "userAgent": "antigravity", // [OPSEC v4.1.32] Must match official Go LS client (was "vscode")
-        // [CHANGED v4.1.24] Use "agent" for all non-image requests
-        "requestType": if config.request_type == "image_gen" { "image_gen" } else { "agent" }
+        "userAgent": official_user_agent,
+        "requestType": if is_agent_request { "agent" } else { "image_gen" }
     });
 
-    final_request
+    if is_agent_request {
+        if let Some(obj) = final_request_obj.as_object_mut() {
+            // 强制注入 Google One AI 信用额度支持标号
+            obj.insert("enabledCreditTypes".to_string(), json!(["GOOGLE_ONE_AI"]));
+        }
+    }
+
+    final_request_obj
 }
 
 #[cfg(test)]

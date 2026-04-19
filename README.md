@@ -1,5 +1,5 @@
 # Antigravity Tools 🚀
-> 专业级 AI 账号管理与协议代理系统 (v4.1.31)
+> 专业级 AI 账号管理与协议代理系统 (v4.1.32)
 <div align="center">
   <img src="public/icon.png" alt="Antigravity Logo" width="120" height="120" style="border-radius: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.15);">
 
@@ -8,7 +8,7 @@
   
   <p>
     <a href="https://github.com/lbjlaq/Antigravity-Manager">
-      <img src="https://img.shields.io/badge/Version-4.1.31-blue?style=flat-square" alt="Version">
+      <img src="https://img.shields.io/badge/Version-4.1.32-blue?style=flat-square" alt="Version">
     </a>
     <img src="https://img.shields.io/badge/Tauri-v2-orange?style=flat-square" alt="Tauri">
     <img src="https://img.shields.io/badge/Backend-Rust-red?style=flat-square" alt="Rust">
@@ -42,6 +42,9 @@
 | :---: | :--- |
 | <img src="docs/images/packycode_logo.png" width="200" alt="PackyCode Logo"> | 感谢 **PackyCode** 对本项目的赞助！PackyCode 是一家可靠高效的 API 中转服务商，提供 Claude Code、Codex、Gemini 等多种服务的中转。PackyCode 为本项目的用户提供了特别优惠：使用[此链接](https://www.packyapi.com/register?aff=Ctrler)注册，并在充值时输入 **“Ctrler”** 优惠码即可享受 **九折优惠**。 |
 | <img src="docs/images/AICodeMirror.jpg" width="200" alt="AICodeMirror Logo"> | 感谢 AICodeMirror 赞助了本项目！AICodeMirror 提供 Claude Code / Codex / Gemini CLI 官方高稳定中转服务，支持企业级高并发、极速开票、7×24 专属技术支持。 Claude Code / Codex / Gemini 官方渠道低至 3.8 / 0.2 / 0.9 折，充值更有折上折！AICodeMirror 为 Antigravity-Manager 的用户提供了特别福利，通过[此链接](https://www.aicodemirror.com/register?invitecode=MV5XUM)注册的用户，可享受首充8折，企业客户最高可享 7.5 折！ |
+| <img src="https://coder.visioncoder.cn/logo.png" width="200" alt="VisionCoder Logo"> | 感谢 VisionCoder 对本项目的支持。[VisionCoder 开发平台](https://coder.visioncoder.cn) 是一个可靠高效性 API 中继服务提供商，提供 Claude Code、Codex、Gemini 等主流 AI 模型，帮助开发者和团队更轻松地集成 AI 功能，提升工作效率。VisionCoder 为本站用户提供了专属福利：通过[此链接](https://coder.visioncoder.cn)注册并购买 [Token Plan](https://coder.visioncoder.cn) 限时活动，可享受“买 1 个月赠 1 个月”优惠。 |
+
+
 
 ### ☕ 支持项目 (Support)
 
@@ -127,7 +130,7 @@ graph TD
 
 **Linux / macOS:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/v4.1.31/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/v4.1.32/install.sh | bash
 ```
 
 **Windows (PowerShell):**
@@ -137,7 +140,7 @@ irm https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/install.ps
 
 > **支持的格式**: Linux (`.deb` / `.rpm` / `.AppImage`) | macOS (`.dmg`) | Windows (NSIS `.exe`)
 >
-> **高级用法**: 安装指定版本 `curl -fsSL ... | bash -s -- --version 4.1.31`，预览模式 `curl -fsSL ... | bash -s -- --dry-run`
+> **高级用法**: 安装指定版本 `curl -fsSL ... | bash -s -- --version 4.1.32`，预览模式 `curl -fsSL ... | bash -s -- --dry-run`
 
 #### macOS - Homebrew
 如果您已安装 [Homebrew](https://brew.sh/)，也可以通过以下命令安装：
@@ -437,6 +440,22 @@ response = client.chat.completions.create(
 ## 📝 开发者与社区
 
 *   **版本演进 (Changelog)**:
+    *   **v4.1.32 (2026-04-18)**:
+        -   **[代理增强] Gemini 代理生产级稳定性重构**:
+            -   **指纹同构化**: 重写 `requestId` 生成逻辑，严格遵循官方 `agent/{timestamp}/{hex8}` 路径指纹。
+            -   **链路追踪注入**: 在 OpenAI/Claude 协议转换层强制注入 `__cloudCodeMeta` 追踪 ID，实现协议级流量拟真。
+            -   **冗余重试窗口**: 针对 `10xx`/`503`/`529` 等瞬时错误实现 1500ms 原地容错窗口，大幅提升高并发稳定性。
+        -   **[核心修复] 修正反代服务拦截漏洞 (Issue #3027)**:
+            -   修复了在应用启动但未点击“启动”按钮时，后端代理端口已处于活动状态并能处理请求的逻辑缺陷。
+            -   现在服务初始运行状态默认为禁止，只有在显式启动（手动或自动）后才会放行代理流量，确保了 UI 状态与后端逻辑的严格一致。
+            -   管理后台 API 路径已做豁免处理，确保基础管理功能不受影响。
+        -   **[核心修复] 彻底解决账号切换时的“状态失效”与“指纹冲突”问题**:
+            -   **指纹同步**: 实现了 `serviceMachineId` 在磁盘配置与 `state.vscdb` 数据库间的同步注入，解决了切换账号后 VS Code 弹出“环境变更”并要求重新登录的顽疾。
+            -   **校验降级**: 弱化了企业版账号的项目预检逻辑。当无法自动解析到 `project_id` 时，系统将改为记录警告而非抛错中断切换，确保权限受限账号依然可以完成切换并正常使用。
+        -   **[重要提示] 账号切换与风险建议**:
+            -   **自动重试提示**: 如果在 Antigravity 客户端不停地出现 `retry`，请尝试切换账号使用即可。
+            -   **风险控制说明**: 对于反代用户，虽然本次更新了部分增强，但使用第三方工具仍可能因违反服务条款而被暂停使用。如有必要，建议使用 Free 账号或企业 Free 账号。
+
     *   **v4.1.31 (2026-03-25)**:
         -   **[推荐项目] 支持新成员 [Antigravity-Tools-LS](https://github.com/lbjlaq/Antigravity-Tools-LS)**: 专为 AI 协议设计的语言服务器，提供极致的开发辅助与调试体验。
         -   **[核心修复] 稳定企业切换与多 OAuth 客户端认证 (PR #2330)**:
@@ -2781,6 +2800,7 @@ response = client.chat.completions.create(
 *   [antigravity-claude-proxy](https://github.com/badrisnarayanan/antigravity-claude-proxy)
 *   [aistudio-gemini-proxy](https://github.com/zhongruichen/aistudio-gemini-proxy)
 *   [gcli2api](https://github.com/su-kaka/gcli2api)
+*   [agent-vibes](https://github.com/funny-vibes/agent-vibes)
 
 *   **版权许可**: 基于 **CC BY-NC-SA 4.0** 许可，**严禁任何形式的商业行为**。
 *   **安全声明**: 本应用所有账号数据加密存储于本地 SQLite 数据库，除非开启同步功能，否则数据绝不离开您的设备。

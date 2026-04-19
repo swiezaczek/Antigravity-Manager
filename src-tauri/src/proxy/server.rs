@@ -321,7 +321,7 @@ impl AxumServer {
         let zai_vision_mcp_state = Arc::new(crate::proxy::zai_vision_mcp::ZaiVisionMcpState::new());
         let experimental_state = Arc::new(RwLock::new(experimental_config));
         let debug_logging_state = Arc::new(RwLock::new(debug_logging));
-        let is_running_state = Arc::new(RwLock::new(true));
+        let is_running_state = Arc::new(RwLock::new(false));
 
         let state = AppState {
             token_manager: token_manager.clone(),

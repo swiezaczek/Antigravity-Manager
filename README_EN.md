@@ -1,5 +1,5 @@
 # Antigravity Tools 🚀
-> Professional AI Account Management & Protocol Proxy System (v4.1.31)
+> Professional AI Account Management & Protocol Proxy System (v4.1.32)
 
 <div align="center">
   <img src="public/icon.png" alt="Antigravity Logo" width="120" height="120" style="border-radius: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.15);">
@@ -9,7 +9,7 @@
   
   <p>
     <a href="https://github.com/lbjlaq/Antigravity-Manager">
-      <img src="https://img.shields.io/badge/Version-4.1.31-blue?style=flat-square" alt="Version">
+      <img src="https://img.shields.io/badge/Version-4.1.32-blue?style=flat-square" alt="Version">
     </a>
     <img src="https://img.shields.io/badge/Tauri-v2-orange?style=flat-square" alt="Tauri">
     <img src="https://img.shields.io/badge/Backend-Rust-red?style=flat-square" alt="Rust">
@@ -43,6 +43,9 @@ By leveraging this app, you can transform common Web Sessions (Google/Anthropic)
 | :---: | :--- |
 | <img src="docs/images/packycode_logo.png" width="200" alt="PackyCode Logo"> | Thanks to **PackyCode** for sponsoring this project! PackyCode is a reliable and efficient API relay service provider, offering relays for various services such as Claude Code, Codex, and Gemini. PackyCode provides a special offer for users of this project: Register using [this link](https://www.packyapi.com/register?aff=Ctrler) and enter the **"Ctrler"** coupon code when topping up to enjoy a **10% discount**. |
 | <img src="docs/images/AICodeMirror.jpg" width="200" alt="AICodeMirror Logo"> | Thanks to **AICodeMirror** for sponsoring this project! AICodeMirror provides official high-stability relay services for Claude Code / Codex / Gemini CLI, supporting enterprise-grade concurrency, fast invoicing, and 24/7 dedicated technical support. Claude Code / Codex / Gemini official channels at 38% / 2% / 9% of original price, with extra discounts on top-ups! AICodeMirror offers special benefits for Antigravity-Manager users: register via [this link](https://www.aicodemirror.com/register?invitecode=MV5XUM) to enjoy 20% off your first top-up, and enterprise customers can get up to 25% off! |
+| <img src="https://coder.visioncoder.cn/logo.png" width="200" alt="VisionCoder Logo"> | Thanks to VisionCoder for supporting this project. [VisionCoder Developer Platform](https://coder.visioncoder.cn) is a reliable and efficient API relay service provider, offering access to mainstream AI models such as Claude Code, Codex, and Gemini. It helps developers and teams integrate AI capabilities more easily and improve productivity. VisionCoder is offering a limited-time [Token Plan](https://coder.visioncoder.cn) promotion for our users: register via [this link](https://coder.visioncoder.cn) and buy 1 month to get 1 month free. |
+
+
 
 ### ☕ Support
 
@@ -128,7 +131,7 @@ Automatically detects your OS, architecture, and package manager — one command
 
 **Linux / macOS:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/v4.1.31/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/v4.1.32/install.sh | bash
 ```
 
 **Windows (PowerShell):**
@@ -138,7 +141,7 @@ irm https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/install.ps
 
 > **Supported formats**: Linux (`.deb` / `.rpm` / `.AppImage`) | macOS (`.dmg`) | Windows (NSIS `.exe`)
 >
-> **Advanced usage**: Install a specific version `curl -fsSL ... | bash -s -- --version 4.1.31`，dry-run mode `curl -fsSL ... | bash -s -- --dry-run`
+> **Advanced usage**: Install a specific version `curl -fsSL ... | bash -s -- --version 4.1.32`，dry-run mode `curl -fsSL ... | bash -s -- --dry-run`
 
 #### macOS - Homebrew
 If you have [Homebrew](https://brew.sh/) installed, you can also install via:
@@ -289,7 +292,22 @@ print(response.choices[0].message.content)
 ## 📝 Developer & Community
 
 *   **Changelog**:
-    *   **v4.1.31 (2026-03-25)**:
+    *   **v4.1.32 (2026-04-18)**:
+        -   **[Proxy Enhancement] Gemini Proxy Production-Grade Stability Refactoring**:
+            -   **Fingerprint Alignment**: Rewrote `requestId` generation logic to strictly follow the official `agent/{timestamp}/{hex8}` path fingerprint.
+            -   **Trace ID Injection**: Forced injection of `__cloudCodeMeta` trace IDs into OpenAI/Claude protocol mappers for pixel-perfect traffic spoofing.
+            -   **Grace Retry Window**: Implemented a 1500ms grace window for transient errors (10xx/503/529), significantly improving high-concurrency reliability.
+        -   **[Core Fix] Resolve reverse proxy service interception vulnerability (Issue #3027)**:
+            -   Fixed a logic defect where the backend proxy port was active and could handle requests even when the app was started but the "Start" button was not clicked.
+            -   Service initial running status is now defaulted to forbidden; proxy traffic is only allowed after explicit startup (manual or automatic), ensuring strict consistency between UI state and backend logic.
+            -   Management API paths have been exempted to ensure basic management functionality remains unaffected.
+        -   **[Core Fix] Resolve "Status Invalidation" and "Fingerprint Conflict" issues during account switching**:
+            -   **Fingerprint Sync**: Implemented synchronous injection of `serviceMachineId` between disk config and `state.vscdb` database, resolving the persistent issue where VS Code pops up "Environment Changed" and requires re-login after switching accounts.
+            -   **Validation Downgrade**: Weakened the enterprise account pre-check logic. When a `project_id` cannot be automatically resolved, the system now records a warning instead of throwing an error to block the switch, ensuring accounts with restricted permissions can still be switched and used.
+        -   **[Important Note] Account Switching & Risk Advice**:
+            -   **Retry Notice**: If the Antigravity client shows continuous `retry`, please switch to another account.
+            -   **Risk Control Info**: For proxy users, despite the enhancements in this update, using third-party tools may lead to suspension for violating terms of service. If necessary, it is recommended to use Free or Enterprise Free accounts.
+
         -   **[Recommended Project] Support our new member [Antigravity-Tools-LS](https://github.com/lbjlaq/Antigravity-Tools-LS)**: A Language Server designed for AI protocols, providing the ultimate developer assistance and debugging experience.
         -   **[Core Fix] Stable Enterprise Switching & Multi OAuth-Client Auth (PR #2330)**:
             -   **Multi-Client Support**: Introduced support for multiple OAuth-clients and `oauth_client_key` tracking, enabling active switching.
