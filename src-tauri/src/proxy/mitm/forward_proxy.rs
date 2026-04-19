@@ -424,28 +424,66 @@ fn rewrite_agent_telemetry(mut headers: Vec<String>, body: Vec<u8>) -> (Vec<Stri
                 }
             }
 
-            // [OPSEC] Deep scrub of correlation fingerprints in Telemetry
-            fn scrub_red_flags(v: &mut serde_json::Value) {
+            // [OPSEC v2] Spoof identity fingerprints with per-account DeviceProfile
+            // instead of removing fields (removal creates detectable anomalies).
+            let device_profile = crate::modules::account::load_account(&proxy_token.account_id)
+                .ok()
+                .and_then(|acc| acc.device_profile);
+
+            let spoof_session_id = uuid::Uuid::new_v4().to_string();
+
+            fn spoof_identity(
+                v: &mut serde_json::Value,
+                profile: &Option<crate::models::DeviceProfile>,
+                spoof_session: &str,
+            ) {
                 if let Some(obj) = v.as_object_mut() {
-                    let bad_keys = [
-                        "machineId", "macAddress", "os", "osInfo", "osVersion", 
-                        "hardware", "network", "clientVersion", "vscodeSessionId", 
-                        "sessionId", "filePath", "fileName", "workspacePath", 
-                        "repository", "remoteUrl", "gitHash"
-                    ];
-                    for key in bad_keys.iter() {
+                    // Spoof machine identifiers with account-bound DeviceProfile
+                    if let Some(dp) = profile {
+                        if obj.contains_key("machineId") {
+                            obj.insert("machineId".to_string(), serde_json::json!(dp.machine_id));
+                        }
+                        if obj.contains_key("macMachineId") || obj.contains_key("macAddress") {
+                            if obj.contains_key("macMachineId") {
+                                obj.insert("macMachineId".to_string(), serde_json::json!(dp.mac_machine_id));
+                            }
+                            if obj.contains_key("macAddress") {
+                                obj.insert("macAddress".to_string(), serde_json::json!(dp.mac_machine_id));
+                            }
+                        }
+                        if obj.contains_key("devDeviceId") {
+                            obj.insert("devDeviceId".to_string(), serde_json::json!(dp.dev_device_id));
+                        }
+                        if obj.contains_key("sqmId") {
+                            obj.insert("sqmId".to_string(), serde_json::json!(dp.sqm_id));
+                        }
+                    }
+
+                    // Spoof session identifiers with fresh UUIDs
+                    if obj.contains_key("sessionId") {
+                        obj.insert("sessionId".to_string(), serde_json::json!(spoof_session));
+                    }
+                    if obj.contains_key("vscodeSessionId") {
+                        obj.insert("vscodeSessionId".to_string(), serde_json::json!(spoof_session));
+                    }
+
+                    // Remove workspace/file paths (can't meaningfully spoof, reveals code)
+                    let path_keys = ["filePath", "fileName", "workspacePath", "repository", "remoteUrl", "gitHash"];
+                    for key in path_keys.iter() {
                         obj.remove(*key);
                     }
+
+                    // Recurse into nested objects/arrays
                     for value in obj.values_mut() {
-                        scrub_red_flags(value);
+                        spoof_identity(value, profile, spoof_session);
                     }
                 } else if let Some(arr) = v.as_array_mut() {
                     for item in arr.iter_mut() {
-                        scrub_red_flags(item);
+                        spoof_identity(item, profile, spoof_session);
                     }
                 }
             }
-            scrub_red_flags(&mut json_val);
+            spoof_identity(&mut json_val, &device_profile, &spoof_session_id);
 
             let new_body = serde_json::to_vec(&json_val).unwrap_or(body);
             
