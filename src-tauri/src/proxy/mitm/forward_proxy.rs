@@ -17,6 +17,13 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::TlsAcceptor;
+use once_cell::sync::Lazy;
+use std::sync::RwLock;
+
+// [OPSEC Phase 11] Ghost Cache Structure:
+// Keys: `AccountID|Path|HeaderType` -> Value: `String`
+// Preserves native HTTP 304 response caching logic without proxy cross-contamination.
+static GHOST_CACHE: Lazy<RwLock<std::collections::HashMap<String, String>>> = Lazy::new(|| RwLock::new(std::collections::HashMap::new()));
 
 /// Start the MITM forward proxy on the given port.
 /// This function runs forever (until the tokio runtime shuts down).
@@ -35,8 +42,9 @@ pub async fn start(ca: Arc<CertificateAuthority>, port: u16) -> Result<(), Strin
             Ok((stream, peer)) => {
                 let ca = ca.clone();
                 let proxy_pool_clone = proxy_pool.clone();
+                let token_manager_clone = token_manager.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = handle_client(stream, ca, proxy_pool_clone).await {
+                    if let Err(e) = handle_client(stream, ca, proxy_pool_clone, token_manager_clone).await {
                         tracing::debug!("[MITM] Connection from {} error: {}", peer, e);
                     }
                 });
@@ -53,6 +61,7 @@ async fn handle_client(
     mut stream: TcpStream,
     ca: Arc<CertificateAuthority>,
     proxy_pool: Arc<crate::proxy::proxy_pool::ProxyPoolManager>,
+    token_manager: Arc<crate::proxy::TokenManager>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // 1. Read the CONNECT request line
     let mut reader = BufReader::new(&mut stream);
@@ -100,7 +109,7 @@ async fn handle_client(
 
     // 4. Handle HTTP request(s) inside the TLS tunnel (support keep-alive)
     loop {
-        match handle_tunneled_request(&mut tls_stream, &host, &proxy_pool).await {
+        match handle_tunneled_request(&mut tls_stream, &host, &proxy_pool, &token_manager).await {
             Ok(true) => continue,  // keep-alive: handle next request
             Ok(false) => break,    // connection closed cleanly
             Err(e) => {
@@ -119,6 +128,7 @@ async fn handle_tunneled_request(
     tls_stream: &mut tokio_rustls::server::TlsStream<TcpStream>,
     host: &str,
     proxy_pool: &Arc<crate::proxy::proxy_pool::ProxyPoolManager>,
+    token_manager: &Arc<crate::proxy::TokenManager>,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
     // Read the HTTP request line
     let mut buf_reader = BufReader::new(&mut *tls_stream);
@@ -161,6 +171,53 @@ async fn handle_tunneled_request(
         buf_reader.read_exact(&mut body).await?;
     }
 
+    // [OPSEC] Attempt to identify account_id from refresh_token in OAuth calls to prevent IP correlation
+    let mut resolved_account_id: Option<String> = None;
+    if host.contains("oauth2.googleapis.com") && path.contains("/token") && !body.is_empty() {
+        if let Ok(body_str) = String::from_utf8(body.clone()) {
+            if let Ok(parsed) = serde_urlencoded::from_str::<std::collections::HashMap<String, String>>(&body_str) {
+                if let Some(refresh_token) = parsed.get("refresh_token") {
+                    resolved_account_id = token_manager.get_account_id_by_refresh_token(refresh_token);
+                    if resolved_account_id.is_some() {
+                        tracing::debug!("[MITM] Air-Gap matched OAuth refresh to account: {:?}", resolved_account_id);
+                    }
+                }
+            }
+        }
+    }
+
+    // [OPSEC] Resolve Zero-Auth Trap: resolve account from Authorization Bearer header
+    if resolved_account_id.is_none() {
+        for header in &headers {
+            let h_lower = header.to_lowercase();
+            if h_lower.starts_with("authorization: bearer ") {
+                if let Some(token) = header.get(22..) {
+                    let token = token.trim();
+                    resolved_account_id = token_manager.get_account_id_by_access_token(token);
+                    if resolved_account_id.is_some() {
+                        tracing::debug!("[MITM] Zero-Auth Trap avoided: Air-Gap matched Bearer to account: {:?}", resolved_account_id);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // [OPSEC] Spoof/Scrub tracking headers using DeviceProfile 
+    let mut spoofed_headers = spoof_headers(headers.clone(), resolved_account_id.as_deref());
+
+    // [OPSEC] Process Unleash payloads to scrub instanceId from JSON body
+    let spoofed_body = spoof_unleash_body(host, path, body, resolved_account_id.as_deref());
+
+    // [OPSEC 7.5] Recalculate Content-Length after body spoofing to prevent mismatch
+    if spoofed_body.len() != content_length {
+        for h in spoofed_headers.iter_mut() {
+            if h.to_lowercase().starts_with("content-length:") {
+                *h = format!("Content-Length: {}", spoofed_body.len());
+            }
+        }
+    }
+
     // 5. Apply rules
     let action = rules::evaluate(host, path);
 
@@ -177,9 +234,9 @@ async fn handle_tunneled_request(
             Ok(keep_alive)
         }
         rules::Action::Pass => {
-            // 6. Connect to real upstream server using ProxyPool (generic token)
+            // 6. Connect to real upstream server using ProxyPool (isolated account if matched, generic fallback if not)
             let upstream_response =
-                forward_to_upstream_with_proxy(host, method, path, &headers, &body, proxy_pool, None).await?;
+                forward_to_upstream_with_proxy(host, method, path, &spoofed_headers, &spoofed_body, proxy_pool, resolved_account_id.as_deref()).await?;
 
             tracing::debug!(
                 "[MITM] ✓ Passed: {} {} {} ({} bytes → {} bytes response)",
@@ -225,7 +282,7 @@ async fn handle_tunneled_request(
             let local_host = format!("127.0.0.1:{}", app_port);
             let mut request = format!("{} {} HTTP/1.1\r\n", method, rewritten_path);
             
-            for h in headers {
+            for h in spoofed_headers {
                 if h.to_lowercase().starts_with("host:") {
                     request.push_str(&format!("Host: {}\r\n", local_host));
                 } else {
@@ -233,12 +290,13 @@ async fn handle_tunneled_request(
                     request.push_str("\r\n");
                 }
             }
-            request.push_str("\r\n");
+            let content_len = spoofed_body.len();
+            request.push_str(&format!("Content-Length: {}\r\n\r\n", content_len));
 
-            let mut tcp = TcpStream::connect(&local_host).await?;
+            let mut tcp = tokio::net::TcpStream::connect(&local_host).await?;
             tcp.write_all(request.as_bytes()).await?;
-            if !body.is_empty() {
-                tcp.write_all(&body).await?;
+            if content_len > 0 {
+                tcp.write_all(&spoofed_body).await?;
             }
             tcp.flush().await?;
 
@@ -265,6 +323,153 @@ async fn handle_tunneled_request(
     }
 }
 
+fn spoof_headers(headers: Vec<String>, account_id: Option<&str>) -> Vec<String> {
+    let device_profile = account_id
+        .and_then(|id| crate::modules::account::load_account(id).ok())
+        .and_then(|acc| acc.device_profile);
+
+    let spoof_session_id = account_id.map(|id| crate::proxy::common::session::get_or_create_vscode_session_id(id))
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let spoof_trace_id = uuid::Uuid::new_v4().to_string().replace("-", ""); // trace context uses hex
+
+    let mut new_headers = Vec::with_capacity(headers.len());
+
+    for line in headers {
+        let h_lower = line.to_lowercase();
+        if h_lower.starts_with("x-mac-machine-id:") || h_lower.starts_with("x-mac:") || h_lower.starts_with("x-machine-id:") {
+            if let Some(dp) = &device_profile {
+                if let Some(mac) = &dp.mac_machine_id {
+                    let header_name = line.split(':').next().unwrap_or("x-mac-machine-id");
+                    new_headers.push(format!("{}: {}", header_name, mac));
+                    continue;
+                }
+            }
+            continue; // drop if no profile
+        }
+        if h_lower.starts_with("sqm-id:") {
+            if let Some(dp) = &device_profile {
+                if let Some(sqm) = &dp.sqm_id {
+                    new_headers.push(format!("sqm-id: {}", sqm));
+                    continue;
+                }
+            }
+            continue; // drop if no profile
+        }
+        if h_lower.starts_with("vscode-sessionid:") {
+            new_headers.push(format!("vscode-sessionid: {}", spoof_session_id));
+            continue;
+        }
+        if h_lower.starts_with("x-cloud-trace-context:") || h_lower.starts_with("traceid:") {
+            let header_name = line.split(':').next().unwrap_or("x-cloud-trace-context");
+            new_headers.push(format!("{}: {}/1;o=1", header_name, spoof_trace_id));
+            continue;
+        }
+        if h_lower.starts_with("cookie:") {
+            // Air-gap cookies to avoid session linking
+            continue;
+        }
+        if h_lower.starts_with("unleash-instanceid:") {
+            // [OPSEC 7.1] Generate hostname-format instanceId to match native VS Code format
+            let spoofed = account_id.map(|id| {
+                let hash = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, id.as_bytes());
+                let h = &hash.to_string()[..8];
+                format!("DESKTOP-{}\\user-DESKTOP-{}", h.to_uppercase(), h.to_uppercase())
+            }).unwrap_or_else(|| {
+                let hash = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, b"AntigravityLocalMachine");
+                let h = &hash.to_string()[..8];
+                format!("DESKTOP-{}\\user-DESKTOP-{}", h.to_uppercase(), h.to_uppercase())
+            });
+            new_headers.push(format!("unleash-instanceid: {}", spoofed));
+            continue;
+        }
+        if h_lower.starts_with("unleash-connection-id:") {
+            let spoofed = account_id.map(|id| uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, id.as_bytes()).to_string()).unwrap_or_else(|| uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, b"AntigravityLocalMachine").to_string());
+            new_headers.push(format!("unleash-connection-id: {}", spoofed));
+            continue;
+        }
+        }
+        if h_lower.starts_with("user-agent:") {
+            if h_lower.contains("antigravity/") {
+                // [OPSEC v4.1.33] Wektor Chimeryczny: Zamiast na ślepo wymuszać Node.js,
+                // inteligentnie podmieniamy nazwę klienta na `cloudcode`.
+                // Dzięki temu `Go LS` pozostaje Go LS, a `Node.js` pozostaje Node.js!
+                let spoofed = line.replace("antigravity", "cloudcode").replace("ANTIGRAVITY", "cloudcode");
+                new_headers.push(spoofed);
+                continue;
+            }
+        }
+        
+        new_headers.push(line);
+    }
+    
+    new_headers
+}
+
+fn spoof_unleash_body(host: &str, path: &str, body: Vec<u8>, account_id: Option<&str>) -> Vec<u8> {
+    if !path.contains("/api/client/register") && !path.contains("/api/client/metrics") && !path.contains("/api/client/features") {
+        return body;
+    }
+    
+    if body.is_empty() {
+        return body;
+    }
+
+    if let Ok(mut json) = serde_json::from_slice::<serde_json::Value>(&body) {
+        if let Some(obj) = json.as_object_mut() {
+            // [OPSEC 7.1] Hostname-format instanceId matching native Go LS format
+            let spoofed_instance_id = account_id.map(|id| {
+                let hash = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, id.as_bytes());
+                let h = &hash.to_string()[..8];
+                format!("DESKTOP-{}\\user-DESKTOP-{}", h.to_uppercase(), h.to_uppercase())
+            }).unwrap_or_else(|| {
+                let hash = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, b"AntigravityLocalMachine");
+                let h = &hash.to_string()[..8];
+                format!("DESKTOP-{}\\user-DESKTOP-{}", h.to_uppercase(), h.to_uppercase())
+            });
+            let spoofed_conn_id = account_id.map(|id| uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, id.as_bytes()).to_string()).unwrap_or_else(|| uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, b"AntigravityLocalMachine").to_string());
+
+            if obj.contains_key("instanceId") {
+                obj.insert("instanceId".to_string(), serde_json::Value::String(spoofed_instance_id.clone()));
+            }
+            if obj.contains_key("connectionId") {
+                obj.insert("connectionId".to_string(), serde_json::Value::String(spoofed_conn_id));
+            }
+
+            // [OPSEC 7.3] Randomize 'started' timestamp to prevent process-level fingerprinting
+            if obj.contains_key("started") {
+                use rand::Rng;
+                let jitter_secs = rand::thread_rng().gen_range(-300..300i64);
+                let now = chrono::Local::now() + chrono::Duration::seconds(jitter_secs);
+                obj.insert("started".to_string(), serde_json::Value::String(now.to_rfc3339_opts(chrono::SecondsFormat::Nanos, false)));
+            }
+
+            // [OPSEC 7.3] Also randomize bucket.start/stop timestamps in metrics
+            if let Some(bucket) = obj.get_mut("bucket").and_then(|b| b.as_object_mut()) {
+                use rand::Rng;
+                let jitter_secs = rand::thread_rng().gen_range(-300..300i64);
+                let now = chrono::Local::now() + chrono::Duration::seconds(jitter_secs);
+                if bucket.contains_key("start") {
+                    bucket.insert("start".to_string(), serde_json::Value::String(
+                        (now - chrono::Duration::seconds(60)).to_rfc3339_opts(chrono::SecondsFormat::Nanos, false)
+                    ));
+                }
+                if bucket.contains_key("stop") {
+                    bucket.insert("stop".to_string(), serde_json::Value::String(
+                        now.to_rfc3339_opts(chrono::SecondsFormat::Nanos, false)
+                    ));
+                }
+            }
+
+            tracing::debug!("[MITM] Scrubbed Unleash payload body for account ID: {:?}", account_id);
+        }
+        
+        if let Ok(new_body) = serde_json::to_vec(&json) {
+            return new_body;
+        }
+    }
+    body
+}
+
 async fn forward_to_upstream_with_proxy(
     host: &str,
     method: &str,
@@ -274,8 +479,11 @@ async fn forward_to_upstream_with_proxy(
     proxy_pool: &Arc<crate::proxy::proxy_pool::ProxyPoolManager>,
     account_id: Option<&str>,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
-    // 1. Obtain a standard proxy client (generic if account_id is None)
-    let client = proxy_pool.get_effective_standard_client(account_id, 30).await;
+    // [OPSEC Phase 10] Prevent HTTP/2 downgrade fingerprinting for native Go services.
+    // Unleash (api/client) and Clearcut (/log) use HTTP/2 natively via Go LS.
+    // v1internal is Node.js and must stay HTTP/1.1.
+    let allow_http2 = path.contains("/api/client") || path.contains("/log") || host.contains("play.googleapis.com");
+    let client = proxy_pool.get_effective_standard_client(account_id, 30, allow_http2).await;
     
     let url = format!("https://{}{}", host, path);
     // Convert method string to HTTP Method
@@ -288,7 +496,24 @@ async fn forward_to_upstream_with_proxy(
             req_builder = req_builder.header(k.trim(), v.trim());
         }
     }
-    
+    // [OPSEC Phase 11] Ghost Cache Load Phase
+    // Inject the valid caching headers specifically mapped to this Account + Path.
+    if let Some(acc) = account_id {
+        if let Ok(cache) = GHOST_CACHE.read() {
+            let etag_key = format!("{}|{}|etag", acc, path);
+            let lm_key = format!("{}|{}|last-modified", acc, path);
+            
+            if let Some(etag) = cache.get(&etag_key) {
+                req_builder = req_builder.header("If-None-Match", etag);
+                tracing::debug!("[GhostCache] Injected If-None-Match for {}", path);
+            }
+            if let Some(lm) = cache.get(&lm_key) {
+                req_builder = req_builder.header("If-Modified-Since", lm);
+                tracing::debug!("[GhostCache] Injected If-Modified-Since for {}", path);
+            }
+        }
+    }
+
     if !body.is_empty() {
         req_builder = req_builder.body(body.to_vec());
     }
@@ -308,6 +533,47 @@ async fn forward_to_upstream_with_proxy(
         if k.as_str().eq_ignore_ascii_case("transfer-encoding") { continue; }
         // We will compute new Content-Length
         if k.as_str().eq_ignore_ascii_case("content-length") { continue; }
+        // [OPSEC R5] Strip Server-Timing to defeat steganographic watermarking
+        if k.as_str().eq_ignore_ascii_case("server-timing") { continue; }
+        // [OPSEC Phase 10] Strip Alt-Svc to completely prevent QUIC/UDP MITM bypass (forces TCP)
+        if k.as_str().eq_ignore_ascii_case("alt-svc") { continue; }
+
+        // [OPSEC Phase 12] Chromium OS-Level Poison Prevention
+        // Prevents Set-Cookie from infecting OS cookie jars across IDE restarts.
+        if k.as_str().eq_ignore_ascii_case("set-cookie") { continue; }
+        // Prevents Chromium from opening proxy-bypassing background sockets via HTTP Link.
+        if k.as_str().eq_ignore_ascii_case("link") { continue; }
+
+        // [OPSEC Phase 12] Trace Context Echo Prevention 
+        // Eliminates backend mesh routing identifiers that could be echoed by the IDE's next ping.
+        if k.as_str().eq_ignore_ascii_case("x-cloud-trace-context") { continue; }
+        if k.as_str().eq_ignore_ascii_case("x-goog-hash") { continue; }
+        if k.as_str().eq_ignore_ascii_case("x-goog-metageneration") { continue; }
+
+        // [OPSEC Phase 11] Ghost Cache Save Phase
+        // Save the authentic ETag and Last-Modified tied exclusively to this specific account state.
+        // We DO NOT strip them here, letting the IDE cleanly cache them as native payloads.
+        if let Some(acc) = account_id {
+            if k.as_str().eq_ignore_ascii_case("etag") {
+                if let Ok(mut cache) = GHOST_CACHE.write() {
+                    cache.insert(format!("{}|{}|etag", acc, path), v.to_str().unwrap_or("").to_string());
+                }
+            } else if k.as_str().eq_ignore_ascii_case("last-modified") {
+                if let Ok(mut cache) = GHOST_CACHE.write() {
+                    cache.insert(format!("{}|{}|last-modified", acc, path), v.to_str().unwrap_or("").to_string());
+                }
+            }
+        }
+
+        // [OPSEC Phase 11] Spoof Trace ID to destroy telemetry loopbacks
+        if k.as_str().eq_ignore_ascii_case("x-cloudaicompanion-trace-id") {
+            let fake_trace_id = format!("{:016x}", rand::random::<u64>());
+            out.extend_from_slice(k.as_str().as_bytes());
+            out.extend_from_slice(b": ");
+            out.extend_from_slice(fake_trace_id.as_bytes());
+            out.extend_from_slice(b"\r\n");
+            continue;
+        }
         
         out.extend_from_slice(k.as_str().as_bytes());
         out.extend_from_slice(b": ");
@@ -316,8 +582,74 @@ async fn forward_to_upstream_with_proxy(
     }
     
     let body_bytes = response.bytes().await?;
-    out.extend_from_slice(format!("Content-Length: {}\r\n\r\n", body_bytes.len()).as_bytes());
-    out.extend_from_slice(&body_bytes);
+
+    // [OPSEC R3 + Phase 11] Deep JSON Inspection for PII & Caching Leaks
+    let mut final_body = body_bytes.to_vec();
+
+    if path.contains("loadCodeAssist") || path.contains("onboardUser") || path.contains("fetchAvailableModels") || path.contains("fetchUserInfo") || path.contains("cascadeNuxes") {
+        if let Ok(mut json_val) = serde_json::from_slice::<serde_json::Value>(&body_bytes) {
+            
+            fn spoof_response_data(v: &mut serde_json::Value) {
+                if let Some(obj) = v.as_object_mut() {
+                    // 1. Spoof PII
+                    if obj.contains_key("email") {
+                        let acct_hash = account_id.unwrap_or("generic");
+                        use sha2::{Digest, Sha256};
+                        let mut hasher = Sha256::new();
+                        hasher.update(acct_hash.as_bytes());
+                        let result = format!("{:x}", hasher.finalize());
+                        let fake_email = format!("dev.eng.{}@gmail.com", &result[0..6]);
+                        obj.insert("email".to_string(), serde_json::json!(fake_email));
+                    }
+                    if obj.contains_key("fullName") {
+                        obj.insert("fullName".to_string(), serde_json::json!("Developer Node"));
+                    }
+                    if obj.contains_key("gaiaId") {
+                        // Generate a deterministic fake gaiaId based on the AccountID
+                        let acct_hash = account_id.unwrap_or("generic");
+                        use sha2::{Digest, Sha256};
+                        let mut hasher = Sha256::new();
+                        hasher.update(acct_hash.as_bytes());
+                        let result = hasher.finalize();
+                        let mut sum: u64 = 0;
+                        for byte in &result[0..8] {
+                            sum = (sum << 8) | (*byte as u64);
+                        }
+                        // Format it to look like a canonical gaiaId (21 digits)
+                        let fake_gaia = format!("1{:020}", sum);
+                        obj.insert("gaiaId".to_string(), serde_json::json!(fake_gaia));
+                    }
+
+                    // [OPSEC Phase 11] We NO LONGER eradicate experiment arrays here!
+                    // Removing them breaks IDE UI elements. We pass them seamlessly into local state,
+                    // relying on the outgoing Telemetry hook to strip cross-pollination.
+
+                    for (_, val) in obj.iter_mut() {
+                        spoof_response_data(val, account_id);
+                    }
+                } else if let Some(arr) = v.as_array_mut() {
+                    for item in arr.iter_mut() {
+                        spoof_response_data(item, account_id);
+                    }
+                }
+            }
+
+            spoof_response_data(&mut json_val, account_id);
+            if let Ok(spoofed) = serde_json::to_vec(&json_val) {
+                final_body = spoofed;
+            }
+        } else {
+            // Fallback to strict regex if JSON parsing somehow fails for loadCodeAssist legacy upgrades
+            let body_str = String::from_utf8_lossy(&body_bytes);
+            let scrubbed = regex::Regex::new(r"Email=[^&\"]+")
+                .map(|re| re.replace_all(&body_str, "Email=user%40example.com").to_string())
+                .unwrap_or_else(|_| body_str.to_string());
+            final_body = scrubbed.into_bytes();
+        }
+    }
+
+    out.extend_from_slice(format!("Content-Length: {}\r\n\r\n", final_body.len()).as_bytes());
+    out.extend_from_slice(&final_body);
     
     Ok(out)
 }
@@ -405,6 +737,16 @@ fn rewrite_agent_telemetry(mut headers: Vec<String>, body: Vec<u8>) -> (Vec<Stri
                 if obj.contains_key("project") {
                     obj.insert("project".to_string(), serde_json::json!(proxy_token.project_id));
                 }
+                
+                // [OPSEC Phase 11] Strip the locally cached Experiments from outgoing telemetry to prevent cross-account mapping!
+                // The IDE cached Account A's experiments, but is making requests via Account B.
+                // We empty it here so Account B's analytics remain clean of Account A's fingerprint.
+                let exp_keys = ["clientExperiments", "experiments", "experimentIds", "activeExperiments"];
+                for key in exp_keys.iter() {
+                    if obj.contains_key(*key) {
+                        obj.insert((*key).to_string(), serde_json::json!([]));
+                    }
+                }
             }
 
             // [OPSEC v2] Spoof identity fingerprints with per-account DeviceProfile
@@ -413,7 +755,8 @@ fn rewrite_agent_telemetry(mut headers: Vec<String>, body: Vec<u8>) -> (Vec<Stri
                 .ok()
                 .and_then(|acc| acc.device_profile);
 
-            let spoof_session_id = uuid::Uuid::new_v4().to_string();
+            // [OPSEC 7.4] Use per-account cached sessionId instead of random UUID for consistency
+            let spoof_session_id = crate::proxy::common::session::get_or_create_vscode_session_id(&proxy_token.account_id);
 
             fn spoof_identity(
                 v: &mut serde_json::Value,
@@ -454,6 +797,25 @@ fn rewrite_agent_telemetry(mut headers: Vec<String>, body: Vec<u8>) -> (Vec<Stri
                     let path_keys = ["filePath", "fileName", "workspacePath", "repository", "remoteUrl", "gitHash"];
                     for key in path_keys.iter() {
                         obj.remove(*key);
+                    }
+
+                    // [OPSEC Phase 10] Clamp Latency/Duration to hide MITM Proxy delays.
+                    // Local Axum parsing + proxy rotation can add 2000ms-6000ms to a request.
+                    // Go LS records this HTTP RTT as 'durationMs' or 'latency' and sends it.
+                    // Google correlates this with server-side response times (~800ms) and detects the proxy.
+                    let latency_keys = ["durationMs", "latencyMs", "latency", "roundTripTimeMs", "completionLatencyMs", "timeMs"];
+                    for key in latency_keys.iter() {
+                        if let Some(val) = obj.get_mut(*key) {
+                            if let Some(num) = val.as_u64() {
+                                // If latency is suspiciously high (> 1500ms), clamp it to a natural realistic value
+                                if num > 1500 {
+                                    use rand::Rng;
+                                    let realistic_ms = rand::thread_rng().gen_range(300..1200u64);
+                                    *val = serde_json::json!(realistic_ms);
+                                    tracing::debug!("[MITM] Spoofed suspected high latency {} from {} to {}", key, num, realistic_ms);
+                                }
+                            }
+                        }
                     }
 
                     // Recurse into nested objects/arrays

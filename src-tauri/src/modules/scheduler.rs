@@ -297,6 +297,10 @@ pub fn start_scheduler(app_handle: Option<tauri::AppHandle>, proxy_state: crate:
                             if time_left > 0 && time_left <= random_refresh_boundary {
                                 logger::log_info(&format!("[TokenRefresh] Proactively refreshing token for {} (Expires in {}s)", acc.email, time_left));
                                 
+                                // [OPSEC] Wektor 5.4: Add 2-15s inter-account jitter before refreshing to break up cron-bursts
+                                let jitter_ms = rand::thread_rng().gen_range(2000..15000);
+                                tokio::time::sleep(tokio::time::Duration::from_millis(jitter_ms)).await;
+
                                 if let Some(refresh_token) = json.get("token").and_then(|t| t.get("refresh_token")).and_then(|e| e.as_str()) {
                                     match crate::modules::oauth::refresh_access_token(refresh_token, Some(&acc.id)).await {
                                         Ok(token_response) => {

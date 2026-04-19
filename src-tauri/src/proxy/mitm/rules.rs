@@ -32,13 +32,24 @@ pub fn evaluate(host: &str, path: &str) -> Action {
             // [FIX] Forward Filar 1 Native AI traffic to the local proxy (Claude/OpenAI wrapping)
             return Action::RouteToAxum;
         }
-    } else if host.contains("play.googleapis.com") {
-        // [OPSEC] Drop Clearcut telemetry silently to prevent hardware fingerprint correlation
+    } else if host.contains("play.googleapis.com") || is_clearcut_ip(host) {
+        // [OPSEC Phase 3] Drop Clearcut telemetry silently.
+        // MITM deep_log.txt confirmed Go LS sends to 216.239.34.223 by IP, bypassing hostname rule.
+        // Protobuf payloads contain "antigravity", "antigravity_desktop", "ideName..antigravity".
         return Action::Drop;
     }
 
     // PASS: Everything else (OAuth, Unleash, fetchUserInfo...)
     Action::Pass
+}
+
+/// Check if host is a known Clearcut/Playlog IP address.
+/// Go LS resolves DNS before CONNECT, so we must match by IP too.
+/// MITM deep_log.txt confirmed requests going to 216.239.34.223 with
+/// "antigravity" and "antigravity_desktop" in protobuf payloads.
+fn is_clearcut_ip(host: &str) -> bool {
+    // Known Clearcut IPs from MITM captures (216.239.32.0/19 range)
+    host.starts_with("216.239.") && host.split('.').count() == 4
 }
 
 #[cfg(test)]

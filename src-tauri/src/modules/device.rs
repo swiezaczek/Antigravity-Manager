@@ -389,35 +389,21 @@ pub fn restore_backup(storage_path: &Path, use_oldest: bool) -> Result<PathBuf, 
 
 /// Generate a new set of device fingerprints (Cursor/VSCode style)
 pub fn generate_profile() -> DeviceProfile {
+    // [OPSEC] Wektor 6.4 - Keep machineId and macMachineId identical 64-char hex strings to avoid mismatch correlation
+    let hex_64 = random_hex(64);
     DeviceProfile {
-        machine_id: random_hex(64), // [OPSEC] Wektor Z - VSCode uses 64-char sha256 hex string, not auth0 payload.
-        mac_machine_id: new_standard_machine_id(),
+        machine_id: hex_64.clone(),
+        mac_machine_id: hex_64,
         dev_device_id: Uuid::new_v4().to_string(),
         sqm_id: format!("{{{}}}", Uuid::new_v4().to_string().to_uppercase()),
     }
 }
 
 fn random_hex(length: usize) -> String {
-    rand::thread_rng()
-        .sample_iter(&Alphanumeric)
-        .take(length)
-        .map(char::from)
+    let mut rng = rand::thread_rng();
+    (0..length)
+        .map(|_| format!("{:x}", rng.gen_range(0..16)))
         .collect::<String>()
-        .to_lowercase()
 }
 
-fn new_standard_machine_id() -> String {
-    // xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx (y in 8..b)
-    let mut rng = rand::thread_rng();
-    let mut id = String::with_capacity(36);
-    for ch in "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".chars() {
-        if ch == '-' || ch == '4' {
-            id.push(ch);
-        } else if ch == 'x' {
-            id.push_str(&format!("{:x}", rng.gen_range(0..16)));
-        } else if ch == 'y' {
-            id.push_str(&format!("{:x}", rng.gen_range(8..12)));
-        }
-    }
-    id
-}
+

@@ -15,6 +15,22 @@ pub fn derive_session_id(account_id: &str) -> String {
 use std::sync::{LazyLock, Mutex};
 use std::collections::HashMap;
 
+static VSCODE_SESSIONS: LazyLock<Mutex<HashMap<String, String>>> = LazyLock::new(|| {
+    Mutex::new(HashMap::new())
+});
+
+pub fn get_or_create_vscode_session_id(account_id: &str) -> String {
+    let mut map = VSCODE_SESSIONS.lock().unwrap();
+    if let Some(session) = map.get(account_id) {
+        return session.clone();
+    }
+    
+    // [OPSEC] Format: UUIDv4 + timestamp_ms (49 characters) to match native VSCode telemetry behavior
+    let generated = format!("{}{}", uuid::Uuid::new_v4(), chrono::Utc::now().timestamp_millis());
+    map.insert(account_id.to_string(), generated.clone());
+    generated
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

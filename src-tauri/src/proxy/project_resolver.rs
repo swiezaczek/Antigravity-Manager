@@ -6,11 +6,12 @@ pub async fn fetch_project_id(access_token: &str) -> Result<String, String> {
     // [OPSEC v4.1.32] Changed from Sandbox to Prod (original client NEVER hits sandbox)
     let url = "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist";
     
+    // [OPSEC Phase 3] MITM confirmed ide_type: "ANTIGRAVITY" leaked in deep_loadcode.txt
     let request_body = serde_json::json!({
         "metadata": {
-            "ide_type": "ANTIGRAVITY",
-            "ide_version": crate::constants::CURRENT_VERSION.as_str(),
-            "ide_name": "antigravity"
+            "ide_type": "VSCODE",
+            "ide_version": "1.95.1",
+            "ide_name": "vscode"
         }
     });
     
@@ -20,7 +21,7 @@ pub async fn fetch_project_id(access_token: &str) -> Result<String, String> {
     let response = client
         .post(url)
         .headers(headers)
-        .json(&request_body)
+        .body(serde_json::to_vec(&request_body).unwrap_or_default())
         .send()
         .await
         .map_err(|e| format!("loadCodeAssist 请求失败: {}", e))?;
@@ -40,12 +41,13 @@ pub async fn fetch_project_id(access_token: &str) -> Result<String, String> {
     let access_token_clone = access_token.to_string();
     
     tokio::spawn(async move {
+        // [OPSEC Phase 3] Matching quota.rs onboard fix
         let onboard_meta = serde_json::json!({
             "tier_id": tier_for_onboard,
             "metadata": {
-                "ide_type": "ANTIGRAVITY",
-                "ide_version": crate::constants::CURRENT_VERSION.as_str(),
-                "ide_name": "antigravity"
+                "ide_type": "VSCODE",
+                "ide_version": "1.95.1",
+                "ide_name": "vscode"
             }
         });
         
@@ -54,7 +56,7 @@ pub async fn fetch_project_id(access_token: &str) -> Result<String, String> {
         let client = crate::utils::http::get_standard_client();
         let _ = client.post("https://cloudcode-pa.googleapis.com/v1internal:onboardUser")
             .headers(onboard_headers)
-            .json(&onboard_meta)
+            .body(serde_json::to_vec(&onboard_meta).unwrap_or_default())
             .send()
             .await;
     });

@@ -241,6 +241,26 @@ impl TokenManager {
         self.tokens.get(account_id).map(|t| t.clone())
     }
 
+    /// [NEW] Znajduje account_id na podstawie refresh_token z zapytań proxy (Air-Gap OAuth)
+    pub fn get_account_id_by_refresh_token(&self, refresh_token: &str) -> Option<String> {
+        for entry in self.tokens.iter() {
+            if entry.value().refresh_token == refresh_token {
+                return Some(entry.key().clone());
+            }
+        }
+        None
+    }
+
+    /// [NEW] Znajduje account_id na podstawie access_token z zapytań proxy. Zabezpiecza Zero-Auth Trap.
+    pub fn get_account_id_by_access_token(&self, access_token: &str) -> Option<String> {
+        for entry in self.tokens.iter() {
+            if entry.value().access_token == access_token {
+                return Some(entry.key().clone());
+            }
+        }
+        None
+    }
+
     /// Check if an account has been disabled on disk.
     ///
     /// Safety net: avoids selecting a disabled account when the in-memory pool hasn't been
@@ -1323,9 +1343,11 @@ impl TokenManager {
                     // 直接使用优先账号，跳过轮询逻辑
                     let mut token = preferred_token.clone();
 
-                    // [NEW] 检查 token 是否过期（调整刷新时机对齐官方：90s 宽限期）
+                    // [NEW] 检查 token 是否过期（注入随机 Jitter 破坏 Bot Sygnaturę）
                     let now = chrono::Utc::now().timestamp();
-                    if now >= token.timestamp - 90 {
+                    use rand::Rng;
+                    let jitter_sec = rand::thread_rng().gen_range(90..320);
+                    if now >= token.timestamp - jitter_sec {
                         // [NEW] 双重检查锁定逻辑 (Double-Checked Locking)
                         // 1. 获取（或创建）该账号专属的刷新锁
                         let refresh_mu = self.refresh_locks.entry(token.account_id.clone())
@@ -1678,9 +1700,11 @@ impl TokenManager {
                 OnDiskAccountState::Enabled => {}
             }
 
-            // 3. [NEW] 检查 token 是否过期（调整刷新时机对齐官方：90s 宽限期）
+            // 3. [NEW] 检查 token 是否过期（注入随机 Jitter 破坏 Bot Sygnaturę）
             let now = chrono::Utc::now().timestamp();
-            if now >= token.timestamp - 90 {
+            use rand::Rng;
+            let jitter_sec = rand::thread_rng().gen_range(90..320);
+            if now >= token.timestamp - jitter_sec {
                 // [NEW] 双重检查锁定逻辑 (Double-Checked Locking)
                 let refresh_mu = self.refresh_locks.entry(token.account_id.clone())
                     .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))

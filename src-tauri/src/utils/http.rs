@@ -73,7 +73,7 @@ pub fn google_api_headers(access_token: &str) -> HeaderMap {
         HeaderName::from_static("user-agent"),
         HeaderValue::from_str(ua).unwrap_or_else(|_| HeaderValue::from_static("google-api-nodejs-client/10.3.0")),
     ); // [OPSEC] Wektor T Fallback CleanUp
-    h.insert(HeaderName::from_static("x-goog-api-client"), HeaderValue::from_static("gl-node/22.21.1"));
+    h.insert(HeaderName::from_static("x-goog-api-client"), HeaderValue::from_static("gl-node/20.18.0"));
     h.insert(HeaderName::from_static("connection"), HeaderValue::from_static("keep-alive"));
     h
 }
@@ -82,16 +82,9 @@ pub fn google_api_headers(access_token: &str) -> HeaderMap {
 /// MUST be used for streamGenerateContent and other Go-initiated requests.
 /// Go LS uses a minimal subset of headers.
 pub fn go_ls_api_headers(access_token: &str) -> HeaderMap {
-    // Note: No "google-api-nodejs-client" in Go LS UA!
-    let os = std::env::consts::OS;
-    let arch = match std::env::consts::ARCH {
-        "x86_64" => "amd64",
-        "aarch64" => "arm64",
-        "arm" => "arm",
-        "x86" => "386",
-        other => other,
-    };
-    let ua_str = format!("antigravity/{} {}/{}", crate::constants::CURRENT_VERSION.as_str(), os, arch);
+    // [OPSEC v4.1.33] We replace the Antigravity hardcoded string to perfectly blend.
+    // Go LS DOES NOT USE Node.js gaxios! It uses cloudcode/1.22.2 style agents.
+    let ua_str = crate::constants::GO_LS_USER_AGENT.as_str().to_string();
     
     let mut h = HeaderMap::with_capacity(4);
     h.insert(HeaderName::from_static("accept-encoding"), HeaderValue::from_static("gzip"));
@@ -103,7 +96,7 @@ pub fn go_ls_api_headers(access_token: &str) -> HeaderMap {
     h.insert(HeaderName::from_static("content-type"), HeaderValue::from_static("application/json"));
     h.insert(
         HeaderName::from_static("user-agent"),
-        HeaderValue::from_str(&ua_str).unwrap_or_else(|_| HeaderValue::from_static("antigravity/1.22.2 windows/amd64")),
+        HeaderValue::from_str(&ua_str).unwrap_or_else(|_| HeaderValue::from_static("cloudcode/1.22.2 windows/amd64")),
     );
     
     // Note: Go LS does NOT send 'accept: */*', 'connection: keep-alive', or 'x-goog-api-client'
@@ -117,14 +110,16 @@ pub fn google_oauth_headers() -> HeaderMap {
     // [OPSEC v4.1.32] OAuth token exchange uses SHORT UA (no antigravity/ prefix)
     // Official gaxios sends only "google-api-nodejs-client/10.3.0" to /token
     let ua = crate::constants::OAUTH_SHORT_UA.as_str();
-    let mut h = HeaderMap::with_capacity(5);
+    let mut h = HeaderMap::with_capacity(6);
     h.insert(HeaderName::from_static("accept"), HeaderValue::from_static("*/*"));
     h.insert(HeaderName::from_static("accept-encoding"), HeaderValue::from_static("gzip, deflate, br"));
+    // [OPSEC 7.11] Explicit Content-Type with charset=UTF-8 to match native gaxios behavior
+    h.insert(HeaderName::from_static("content-type"), HeaderValue::from_static("application/x-www-form-urlencoded;charset=UTF-8"));
     h.insert(
         HeaderName::from_static("user-agent"),
         HeaderValue::from_str(ua).unwrap_or_else(|_| HeaderValue::from_static("google-api-nodejs-client/10.3.0")),
     );
-    h.insert(HeaderName::from_static("x-goog-api-client"), HeaderValue::from_static("gl-node/22.21.1")); // [OPSEC] Wektor O: auth sync
+    h.insert(HeaderName::from_static("x-goog-api-client"), HeaderValue::from_static("gl-node/20.18.0")); // [OPSEC] Wektor O: auth sync
     h.insert(HeaderName::from_static("connection"), HeaderValue::from_static("keep-alive")); // [OPSEC] Wektor O: keep-alive sync
     h
 }
@@ -145,7 +140,7 @@ pub fn google_get_headers(access_token: &str) -> HeaderMap {
         HeaderName::from_static("user-agent"),
         HeaderValue::from_str(ua).unwrap_or_else(|_| HeaderValue::from_static("google-api-nodejs-client/10.3.0")),
     ); // [OPSEC] Wektor T Fallback CleanUp
-    h.insert(HeaderName::from_static("x-goog-api-client"), HeaderValue::from_static("gl-node/22.21.1")); // [OPSEC] Wektor O: api sync
+    h.insert(HeaderName::from_static("x-goog-api-client"), HeaderValue::from_static("gl-node/20.18.0")); // [OPSEC] Wektor O: api sync
     h.insert(HeaderName::from_static("connection"), HeaderValue::from_static("keep-alive")); // [OPSEC] Wektor O: keep-alive sync
     h
 }

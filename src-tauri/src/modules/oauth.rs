@@ -369,12 +369,14 @@ async fn exchange_code_once(
     redirect_uri: &str,
     client_cfg: &OAuthClientConfig,
 ) -> Result<TokenResponse, (Option<reqwest::StatusCode>, String)> {
-    // [PHASE 2] 对于登录行为，尚未有 account_id，使用全局池阶梯逻辑
-    let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
-        pool.get_effective_standard_client(None, 60).await
-    } else {
-        crate::utils::http::get_long_standard_client()
-    };
+    // [OPSEC] Wektor 5.3: Ensure single-use isolated TCP connection for OAuth to prevent cross-account IP correlation
+    let client = reqwest::Client::builder()
+        .http1_only() // [OPSEC Phase 13] Force HTTP/1.1 for auth callbacks to strictly simulate the internal gaxios Node.js mechanism
+        .timeout(std::time::Duration::from_secs(60))
+        .pool_idle_timeout(Some(std::time::Duration::from_millis(1)))
+        .pool_max_idle_per_host(0)
+        .build()
+        .unwrap_or_else(|_| crate::utils::http::get_long_standard_client());
     
     let params = [
         ("client_id", client_cfg.client_id.as_str()),
@@ -385,14 +387,18 @@ async fn exchange_code_once(
     ];
 
     tracing::debug!(
-        "[OAuth] Sending exchange_code request with User-Agent: {}",
-        crate::constants::NATIVE_OAUTH_USER_AGENT.as_str()
+        "[OAuth] Sending exchange_code request with single-use TCP connection (Connection: close)"
     );
+
+    let mut headers = crate::utils::http::google_oauth_headers();
+    headers.insert(reqwest::header::CONNECTION, reqwest::header::HeaderValue::from_static("close"));
 
     let response = client
         .post(TOKEN_URL)
-        .headers(crate::utils::http::google_oauth_headers())
-        .form(&params)
+        .headers(headers)
+        // [OPSEC 7.11] Use .body() instead of .form() to prevent reqwest from overwriting
+        // our Content-Type header (which includes ;charset=UTF-8 matching native gaxios)
+        .body(params.iter().map(|(k, v)| format!("{}={}", k, v)).collect::<Vec<_>>().join("&"))
         .send()
         .await
         .map_err(|e| {
@@ -515,7 +521,7 @@ async fn refresh_access_token_once(
 ) -> Result<TokenResponse, (Option<reqwest::StatusCode>, String)> {
     // [PHASE 2] 根据 account_id 使用对应的代理
     let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
-        pool.get_effective_standard_client(account_id, 60).await
+        pool.get_effective_standard_client(account_id, 60, false).await
     } else {
         crate::utils::http::get_long_standard_client()
     };
@@ -542,7 +548,8 @@ async fn refresh_access_token_once(
     let response = client
         .post(TOKEN_URL)
         .headers(crate::utils::http::google_oauth_headers())
-        .form(&params)
+        // [OPSEC 7.11] Use .body() to preserve Content-Type with charset=UTF-8
+        .body(params.iter().map(|(k, v)| format!("{}={}", k, v)).collect::<Vec<_>>().join("&"))
         .send()
         .await
         .map_err(|e| {
@@ -643,16 +650,27 @@ pub async fn refresh_access_token(
 /// Revoke the given token (access or refresh) from Google infrastructure.
 /// Helps prevent "zombie sessions" when deleting an account.
 pub async fn revoke_token(token: &str) -> Result<(), String> {
-    let client = crate::utils::http::get_standard_client();
-    
+    // [OPSEC] We MUST NOT use a pooled generic client here!
+    // If a user deletes 5 accounts, sending 5 revoke requests sequentially over
+    // the same underlying Keep-Alive TCP/TLS connection allows Google to correlate
+    // all revoked tokens back to a single actor.
+    // Instead, we build an isolated non-pooled client just for this fire-and-forget.
+    let isolated_client = rquest::Client::builder()
+        .http1_only()
+        .timeout(std::time::Duration::from_secs(15))
+        .pool_max_idle_per_host(0) // Forces a new TLS connection and immediately closes it
+        .build()
+        .unwrap_or_else(|_| crate::utils::http::get_standard_client());
+
     let params = [
         ("token", token),
     ];
     
-    let response = client
+    let response = isolated_client
         .post("https://oauth2.googleapis.com/revoke")
         .headers(crate::utils::http::google_oauth_headers())
-        .form(&params)
+        // [OPSEC 7.11] Use .body() to preserve Content-Type with charset=UTF-8
+        .body(params.iter().map(|(k, v)| format!("{}={}", k, v)).collect::<Vec<_>>().join("&"))
         .send()
         .await
         .map_err(|e| format!("Token revoke request failed: {}", e))?;
@@ -672,7 +690,7 @@ pub async fn revoke_token(token: &str) -> Result<(), String> {
 /// Get user info
 pub async fn get_user_info(access_token: &str, account_id: Option<&str>) -> Result<UserInfo, String> {
     let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
-        pool.get_effective_standard_client(account_id, 15).await
+        pool.get_effective_standard_client(account_id, 15, false).await
     } else {
         crate::utils::http::get_standard_client()
     };

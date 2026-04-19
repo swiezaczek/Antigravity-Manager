@@ -98,6 +98,11 @@ impl ProxyPoolManager {
             // [OPSEC] No emulation, force HTTP/1.1 to match Node.js MITM fingerprint
             .http1_only()
             .timeout(Duration::from_secs(timeout_secs));
+
+        if account_id.is_none() {
+            // [OPSEC] Prevent connection pooling for unauthenticated generic requests to stop Google tracking identical TLS sessions
+            builder = builder.pool_max_idle_per_host(0);
+        }
         
         // 尝试获取代理配置
         let proxy_opt = if let Some(acc_id) = account_id {
@@ -137,15 +142,17 @@ impl ProxyPoolManager {
         }
 
         let new_client = builder.build().unwrap_or_else(|_| Client::builder().http1_only().build().expect("critical: fallback client build failed"));
-        self.account_client_cache.insert(cache_key, new_client.clone());
+        if account_id.is_some() {
+            self.account_client_cache.insert(cache_key, new_client.clone());
+        }
         new_client
     }
 
     /// [NEW] 为指定账号获取“最终生效”的无特征 Standard HttpClient (专门用于纯净场景，如 OAuth 退还)
-    pub async fn get_effective_standard_client(&self, account_id: Option<&str>, timeout_secs: u64) -> Client {
+    pub async fn get_effective_standard_client(&self, account_id: Option<&str>, timeout_secs: u64, allow_http2: bool) -> Client {
         let cache_key = match account_id {
-            Some(id) => format!("{}:{}", id, timeout_secs),
-            None => format!("generic:{}", timeout_secs),
+            Some(id) => format!("{}:{}:{}", id, timeout_secs, allow_http2),
+            None => format!("generic:{}:{}", timeout_secs, allow_http2),
         };
 
         if let Some(client) = self.account_standard_cache.get(&cache_key) {
@@ -153,9 +160,17 @@ impl ProxyPoolManager {
         }
 
         let mut builder = Client::builder()
-            // [OPSEC] No emulation, force HTTP/1.1 to match Node.js MITM fingerprint
-            .http1_only()
             .timeout(Duration::from_secs(timeout_secs));
+            
+        if !allow_http2 {
+            // [OPSEC] For Node.js (gaxios) traffic, enforce HTTP/1.1
+            builder = builder.http1_only();
+        }
+            
+        if account_id.is_none() {
+            // [OPSEC] Prevent connection pooling for unauthenticated generic requests
+            builder = builder.pool_max_idle_per_host(0);
+        }
         
         // 尝试获取代理配置
         let proxy_opt = if let Some(acc_id) = account_id {
@@ -194,8 +209,14 @@ impl ProxyPoolManager {
             }
         }
 
-        let new_client = builder.build().unwrap_or_else(|_| Client::builder().http1_only().build().expect("critical: fallback standard client build failed"));
-        self.account_standard_cache.insert(cache_key, new_client.clone());
+        let new_client = builder.build().unwrap_or_else(|_| {
+            let mut fb = Client::builder().timeout(Duration::from_secs(timeout_secs));
+            if !allow_http2 { fb = fb.http1_only(); }
+            fb.build().expect("critical: fallback standard client build failed")
+        });
+        if account_id.is_some() {
+            self.account_standard_cache.insert(cache_key, new_client.clone());
+        }
         new_client
     }
 

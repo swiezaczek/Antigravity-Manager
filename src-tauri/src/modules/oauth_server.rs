@@ -406,13 +406,8 @@ pub async fn start_oauth_flow(app_handle: Option<tauri::AppHandle>, oauth_client
     }
 
     if !spawned {
-        crate::modules::logger::log_warn("[Zero-Emission] Could not spawn isolated browser, falling back to system default.");
-        if let Some(h) = app_handle {
-            use tauri_plugin_opener::OpenerExt;
-            let _ = h.opener()
-                .open_url(&auth_url, None::<String>)
-                .map_err(|e| format!("failed_to_open_browser: {}", e));
-        }
+        crate::modules::logger::log_error("[Zero-Emission] Could not spawn isolated browser. Aborting OAuth flow.");
+        return Err("Nie można uruchomić izolowanej przeglądarki (Zero-Emission sandbox). Ze względów bezpieczeństwa system zapobiegł otwarciu domyślnej przeglądarki, aby zapobiec wyciekowi tożsamości. Zainstaluj przeglądarkę Edge lub Chrome w standardowej lokalizacji, albo skorzystaj z ręcznej autoryzacji w ukrytym oknie (Incognito).".to_string());
     }
 
     // Take code_rx to wait for it

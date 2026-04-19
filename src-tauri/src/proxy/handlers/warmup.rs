@@ -105,11 +105,8 @@ pub async fn handle_warmup(
 
     let body: Value = if is_claude {
         // Claude 模型：使用 transform_claude_request_in 转换
-        let session_id = format!(
-            "warmup_{}_{}",
-            chrono::Utc::now().timestamp_millis(),
-            &uuid::Uuid::new_v4().to_string()[..8]
-        );
+        // [OPSEC] Wektor 6.3: usunięcie detekowalnego prefixu 'warmup_' w session_id
+        let session_id = uuid::Uuid::new_v4().to_string();
         let claude_request = crate::proxy::mappers::claude::models::ClaudeRequest {
             model: req.model.clone(),
             messages: vec![crate::proxy::mappers::claude::models::Message {
@@ -158,11 +155,8 @@ pub async fn handle_warmup(
         }
     } else {
         // Gemini 模型：使用 wrap_request
-        let session_id = format!(
-            "warmup_{}_{}",
-            chrono::Utc::now().timestamp_millis(),
-            &uuid::Uuid::new_v4().to_string()[..8]
-        );
+        // [OPSEC] Wektor 6.3: usunięcie detekowalnego prefixu 'warmup_' w session_id
+        let session_id = uuid::Uuid::new_v4().to_string();
 
         let base_request = if is_image {
             json!({

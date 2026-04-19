@@ -704,8 +704,9 @@ impl AxumServer {
                 crate::proxy::mitm::set_mitm_port(mitm_port);
                 let ca_clone = ca.clone();
                 let proxy_pool_clone = proxy_pool_manager.clone();
+                let token_manager_clone = token_manager.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = crate::proxy::mitm::forward_proxy::start(ca_clone, mitm_port, proxy_pool_clone).await {
+                    if let Err(e) = crate::proxy::mitm::forward_proxy::start(ca_clone, mitm_port, proxy_pool_clone, token_manager_clone).await {
                         tracing::error!("[MITM] Forward proxy failed: {}", e);
                     }
                 });

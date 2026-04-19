@@ -94,7 +94,7 @@ struct Tier {
 /// Get shared HTTP Client (15s timeout) for pure info fetching (No JA3)
 async fn create_standard_client(account_id: Option<&str>) -> rquest::Client {
     if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
-        pool.get_effective_standard_client(account_id, 15).await
+        pool.get_effective_standard_client(account_id, 15, false).await
     } else {
         crate::utils::http::get_standard_client()
     }
@@ -104,7 +104,7 @@ async fn create_standard_client(account_id: Option<&str>) -> rquest::Client {
 #[allow(dead_code)] // 预留给预热/后台任务调用
 async fn create_long_standard_client(account_id: Option<&str>) -> rquest::Client {
     if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
-        pool.get_effective_standard_client(account_id, 60).await
+        pool.get_effective_standard_client(account_id, 60, false).await
     } else {
         crate::utils::http::get_long_standard_client()
     }
@@ -121,11 +121,11 @@ async fn fetch_project_id(access_token: &str, email: &str, account_id: Option<&s
     let client = create_standard_client(account_id).await;
     let meta = json!({
         "metadata": {
-            "ide_type": "ANTIGRAVITY",
-            "ide_version": crate::constants::CURRENT_VERSION.as_str(),
-            "ide_name": "antigravity"
+            "ide_type": "VSCODE",
+            "ide_version": "1.95.1",
+            "ide_name": "vscode"
         }
-    }); // [OPSEC v4.1.32] Version synced with CURRENT_VERSION
+    }); // [OPSEC] Version synced with generic VS Code to mask Antigravity proxy
 
     // [OPSEC v4.1.32] Use centralized google_api_headers() for consistent fingerprint
     let headers = crate::utils::http::google_api_headers(access_token);
@@ -161,9 +161,9 @@ async fn fetch_project_id(access_token: &str, email: &str, account_id: Option<&s
                         let onboard_meta = json!({
                             "tier_id": tier_for_onboard,
                             "metadata": {
-                                "ide_type": "ANTIGRAVITY",
-                                "ide_version": crate::constants::CURRENT_VERSION.as_str(),
-                                "ide_name": "antigravity"
+                                "ide_type": "VSCODE",
+                                "ide_version": "1.95.1",
+                                "ide_name": "vscode"
                             }
                         });
                         // [OPSEC v4.1.32] Use centralized headers
@@ -175,6 +175,11 @@ async fn fetch_project_id(access_token: &str, email: &str, account_id: Option<&s
                             .await;
                         crate::modules::logger::log_info(&format!("🚀 [{}] Dyskretnie sfinalizowano Onboarding (Faza 4 w API)", email_clone));
 
+                        // [OPSEC] Dyskretna pauza symulująca ładowanie (human jitter)
+                        use rand::Rng;
+                        let onboard_lag = rand::thread_rng().gen_range(150..=450);
+                        tokio::time::sleep(tokio::time::Duration::from_millis(onboard_lag)).await;
+
                         // [OPSEC v4.1.33] Emulate missing fetchUserInfo (Rozbieżnosc 5)
                         let user_info_headers = crate::utils::http::google_api_headers(&access_token_clone);
                         let _ = client_clone.post(format!("{}/v1internal:fetchUserInfo", CLOUD_CODE_BASE_URL))
@@ -182,7 +187,7 @@ async fn fetch_project_id(access_token: &str, email: &str, account_id: Option<&s
                             .body(serde_json::to_vec(&json!({})).unwrap_or_default())
                             .send()
                             .await;
-                        crate::modules::logger::log_info(&format!("👤 [{}] Sfinalizowano fetchUserInfo (Rozbieżność 5)", email_clone));
+                        crate::modules::logger::log_info(&format!("👤 [{}] Sfinalizowano fetchUserInfo (Rozbieżność 5) po lag: {}ms", email_clone, onboard_lag));
                     });
                     
                     // Core logic: Multi-level fallback for tier extraction

@@ -280,8 +280,8 @@ pub async fn handle_generate(
         let upstream_url = response.url().to_string();
         let status = response.status();
 
-        // [NEW] 提取官方 TraceID
-        let cloud_code_trace_id = response.headers()
+        // [NEW] 提取官方 TraceID (no longer propagated — R1 replaces with random hex)
+        let _cloud_code_trace_id = response.headers()
             .get("x-cloudaicompanion-trace-id")
             .and_then(|h| h.to_str().ok())
             .map(|s| s.to_string());
@@ -365,14 +365,15 @@ pub async fn handle_generate(
                         // [NEW] 阶段 6.2: 补全 __cloudCodeMeta 响应元数据透传
                         // 官方 Worker 会将 TraceID 作为 SSE 流的第 0 个数据包下发
                         if !meta_sent {
-                            if let Some(tid) = &cloud_code_trace_id {
-                                let meta_pkg = serde_json::json!({
-                                    "__cloudCodeMeta": {
-                                        "traceId": tid
-                                    }
-                                });
-                                yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", serde_json::to_string(&meta_pkg).unwrap())));
-                            }
+                            // [OPSEC R1] Replace real traceId with random hex to prevent
+                            // canary token feedback loop (server traceId → IDE → telemetry → different account)
+                            let fake_trace_id = format!("{:016x}", rand::random::<u64>());
+                            let meta_pkg = serde_json::json!({
+                                "__cloudCodeMeta": {
+                                    "traceId": fake_trace_id
+                                }
+                            });
+                            yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", serde_json::to_string(&meta_pkg).unwrap())));
                             meta_sent = true;
                         }
 
@@ -488,13 +489,12 @@ pub async fn handle_generate(
 
                 if client_wants_stream {
                     let body = Body::from_stream(stream);
+                    // [OPSEC R6] Remove debug headers that leak account info to IDE clients
                     return Ok(Response::builder()
                         .header("Content-Type", "text/event-stream")
                         .header("Cache-Control", "no-cache")
                         .header("Connection", "keep-alive")
                         .header("X-Accel-Buffering", "no")
-                        .header("X-Account-Email", &email_masked)
-                        .header("X-Mapped-Model", &mapped_model)
                         .body(body)
                         .unwrap()
                         .into_response());
@@ -508,12 +508,9 @@ pub async fn handle_generate(
                                 session_id
                             );
                             let unwrapped = unwrap_response(&gemini_resp);
+                            // [OPSEC R6] Remove debug headers from JSON response
                             return Ok((
                                 StatusCode::OK,
-                                [
-                                    ("X-Account-Email", email_masked.as_str()),
-                                    ("X-Mapped-Model", mapped_model.as_str()),
-                                ],
                                 Json(unwrapped),
                             )
                                 .into_response());
@@ -574,12 +571,9 @@ pub async fn handle_generate(
             }
 
             let unwrapped = unwrap_response(&gemini_resp);
+            // [OPSEC R6] Remove debug headers from non-stream response
             return Ok((
                 StatusCode::OK,
-                [
-                    ("X-Account-Email", email.as_str()),
-                    ("X-Mapped-Model", mapped_model.as_str()),
-                ],
                 Json(unwrapped),
             )
                 .into_response());
@@ -682,11 +676,7 @@ pub async fn handle_generate(
         );
         return Ok((
             status,
-            [
-                ("X-Account-Email", email_masked.as_str()),
-                ("X-Mapped-Model", mapped_model.as_str()),
-            ],
-            // [FIX] Return JSON error
+            // [FIX] Return JSON error — [OPSEC R6] No debug headers
             Json(json!({
                 "error": {
                     "code": status_code,
@@ -701,7 +691,6 @@ pub async fn handle_generate(
     if let Some(email) = last_email {
         Ok((
             StatusCode::TOO_MANY_REQUESTS,
-            [("X-Account-Email", mask_email(&email))],
             format!("All accounts exhausted. Last error: {}", last_error),
         )
             .into_response())

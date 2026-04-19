@@ -1,6 +1,9 @@
 use std::sync::LazyLock;
 use regex::Regex;
 
+/// [OPSEC] Wektor 5.5: Optional flag to disable remote version checks to prevent IP leakage correlation on GCP Cloud Run
+pub const DISABLE_REMOTE_VERSION_CHECK: bool = true;
+
 /// URL to fetch the latest Antigravity version
 const VERSION_URL: &str = "https://antigravity-auto-updater-974169037036.us-central1.run.app";
 
@@ -68,6 +71,9 @@ struct VersionConfig {
 /// Runs in a dedicated OS thread to avoid blocking Tokio's async runtime.
 /// Returns None on any network/parse failure — always non-fatal, 5s timeout.
 fn try_fetch_remote_version() -> Option<String> {
+    if DISABLE_REMOTE_VERSION_CHECK {
+        return None;
+    }
     // Spawn a dedicated OS thread so that `reqwest::blocking` never touches
     // the Tokio thread-pool and cannot trigger the "Cannot block the current
     // thread from within an asynchronous execution context" panic.
@@ -197,7 +203,24 @@ pub static NATIVE_OAUTH_USER_AGENT: LazyLock<String> = LazyLock::new(|| {
         "linux" => "linux/amd64",
         _ => "linux/amd64",
     };
-    format!("antigravity/{} {} google-api-nodejs-client/10.3.0", CURRENT_VERSION.as_str(), platform_info) // [OPSEC v4.1.32] Synced with CURRENT_VERSION
+    // [OPSEC Phase 3] Removed "antigravity/" prefix — MITM confirmed this leaked in EVERY
+    // loadCodeAssist, onboardUser, fetchUserInfo, OAuth /token request to Google.
+    // Now matches canonical Node.js client fingerprint exactly.
+    format!("google-api-nodejs-client/10.3.0")
+});
+
+/// Native Go Language Server User-Agent (for streamGenerateContent)
+pub static GO_LS_USER_AGENT: LazyLock<String> = LazyLock::new(|| {
+    let platform_info = match std::env::consts::OS {
+        "macos" => match std::env::consts::ARCH {
+            "aarch64" => "darwin/arm64",
+            _ => "darwin/amd64"
+        },
+        "windows" => "windows/amd64",
+        "linux" => "linux/amd64",
+        _ => "linux/amd64",
+    };
+    format!("cloudcode/1.22.2 {}", platform_info)
 });
 
 /// Platform identifier for telemetry metadata (matches Go LS format: "WINDOWS_AMD64", "MAC_ARM64", etc.)
@@ -236,7 +259,8 @@ pub fn get_default_user_agent() -> String {
         "linux" => "linux/amd64",
         _ => "linux/amd64",
     };
-    format!("antigravity/{} {} google-api-nodejs-client/10.3.0", CURRENT_VERSION.as_str(), platform_info) // [OPSEC v4.1.32] Synced with CURRENT_VERSION
+    // [OPSEC Phase 3] Removed "antigravity/" prefix to match canonical fingerprint
+    format!("google-api-nodejs-client/10.3.0")
 }
 
 /// Global Session ID (generated once per app launch)
@@ -258,7 +282,8 @@ pub static USER_AGENT: LazyLock<String> = LazyLock::new(|| {
         _ => "linux/amd64",
     };
 
-    let ua = format!("antigravity/{} {} google-api-nodejs-client/10.3.0", CURRENT_VERSION.as_str(), platform_info); // [OPSEC v4.1.32] Synced with CURRENT_VERSION
+    // [OPSEC Phase 3] Removed "antigravity/" prefix — upstream client.rs uses this for ALL requests
+    let ua = format!("google-api-nodejs-client/10.3.0");
     ua
 });
 
