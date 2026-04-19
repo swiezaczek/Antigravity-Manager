@@ -76,7 +76,8 @@ pub async fn handle_warmup(
     // ===== 步骤 1: 获取 Token =====
     let (access_token, project_id, account_id) =
         if let (Some(at), Some(pid)) = (&req.access_token, &req.project_id) {
-            (at.clone(), pid.clone(), String::new())
+            // [FIX #3] Resolve account_id from email for proxy isolation even with direct token
+            (at.clone(), pid.clone(), state.token_manager.get_account_id_by_email(&req.email).unwrap_or_default())
         } else {
             match state.token_manager.get_token_by_email(&req.email).await {
                 Ok((at, pid, _, acc_id, _wait_ms)) => (at, pid, acc_id),
@@ -315,7 +316,7 @@ pub async fn handle_warmup(
             };
 
             // 添加响应头，让监控中间件捕获账号信息
-            if let Ok(email_val) = axum::http::HeaderValue::from_str(&req.email) {
+            if let Ok(email_val) = axum::http::HeaderValue::from_str(&crate::proxy::upstream::client::mask_email(&req.email)) {
                 response.headers_mut().insert("X-Account-Email", email_val);
             }
             if let Ok(model_val) = axum::http::HeaderValue::from_str(&req.model) {
@@ -366,7 +367,7 @@ pub async fn handle_warmup(
                 .into_response();
 
             // 即使失败也添加响应头，以便监控
-            if let Ok(email_val) = axum::http::HeaderValue::from_str(&req.email) {
+            if let Ok(email_val) = axum::http::HeaderValue::from_str(&crate::proxy::upstream::client::mask_email(&req.email)) {
                 response.headers_mut().insert("X-Account-Email", email_val);
             }
             if let Ok(model_val) = axum::http::HeaderValue::from_str(&req.model) {

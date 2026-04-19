@@ -45,6 +45,12 @@ pub struct ProxyPoolManager {
     
     /// 轮询索引 (用于 RoundRobin 策略)
     round_robin_index: Arc<AtomicUsize>,
+
+    /// [OPSEC] 账号隔离的客户端缓存池 (用于 inference 模型)
+    account_client_cache: Arc<DashMap<String, Client>>,
+    
+    /// [OPSEC] 账号隔离的标准无特征客户端缓存池 (用于 OAuth 与 Quota)
+    account_standard_cache: Arc<DashMap<String, Client>>,
 }
 
 impl ProxyPoolManager {
@@ -68,6 +74,8 @@ impl ProxyPoolManager {
             usage_counter: Arc::new(DashMap::new()),
             account_bindings,
             round_robin_index: Arc::new(AtomicUsize::new(0)),
+            account_client_cache: Arc::new(DashMap::new()),
+            account_standard_cache: Arc::new(DashMap::new()),
         }
     }
 
@@ -77,6 +85,15 @@ impl ProxyPoolManager {
     /// 2. 如果无绑定，且开启了“自动全局”，取池中第一个节点
     /// 3. 如果以上均无，则检查全局上游代理 (Upstream Proxy) [由调用方 fallback]
     pub async fn get_effective_client(&self, account_id: Option<&str>, timeout_secs: u64) -> Client {
+        let cache_key = match account_id {
+            Some(id) => format!("{}:{}", id, timeout_secs),
+            None => format!("generic:{}", timeout_secs),
+        };
+
+        if let Some(client) = self.account_client_cache.get(&cache_key) {
+            return client.clone();
+        }
+
         let mut builder = Client::builder()
             // [OPSEC] No emulation, force HTTP/1.1 to match Node.js MITM fingerprint
             .http1_only()
@@ -93,7 +110,6 @@ impl ProxyPoolManager {
                 if let Some(ref p) = res {
                     tracing::info!("[Proxy] Route: Generic Request -> Proxy {} (Pool)", p.entry_id);
                 } else {
-                    // [FIX #1583] 明确记录池中无可用代理的情况
                     tracing::warn!("[Proxy] Route: Generic Request -> No available proxy in pool, falling back to upstream or direct");
                 }
                 res
@@ -105,7 +121,6 @@ impl ProxyPoolManager {
 
         if let Some(proxy_cfg) = proxy_opt {
             builder = builder.proxy(proxy_cfg.proxy);
-            // Already logged more detail in get_proxy_for_account or pool selection
         } else {
             // Fallback 到应用配置的单上游代理
             if let Ok(app_cfg) = crate::modules::config::load_app_config() {
@@ -121,11 +136,22 @@ impl ProxyPoolManager {
             }
         }
 
-        builder.build().unwrap_or_else(|_| Client::builder().http1_only().build().expect("critical: fallback client build failed"))
+        let new_client = builder.build().unwrap_or_else(|_| Client::builder().http1_only().build().expect("critical: fallback client build failed"));
+        self.account_client_cache.insert(cache_key, new_client.clone());
+        new_client
     }
 
     /// [NEW] 为指定账号获取“最终生效”的无特征 Standard HttpClient (专门用于纯净场景，如 OAuth 退还)
     pub async fn get_effective_standard_client(&self, account_id: Option<&str>, timeout_secs: u64) -> Client {
+        let cache_key = match account_id {
+            Some(id) => format!("{}:{}", id, timeout_secs),
+            None => format!("generic:{}", timeout_secs),
+        };
+
+        if let Some(client) = self.account_standard_cache.get(&cache_key) {
+            return client.clone();
+        }
+
         let mut builder = Client::builder()
             // [OPSEC] No emulation, force HTTP/1.1 to match Node.js MITM fingerprint
             .http1_only()
@@ -168,7 +194,9 @@ impl ProxyPoolManager {
             }
         }
 
-        builder.build().unwrap_or_else(|_| Client::builder().http1_only().build().expect("critical: fallback standard client build failed"))
+        let new_client = builder.build().unwrap_or_else(|_| Client::builder().http1_only().build().expect("critical: fallback standard client build failed"));
+        self.account_standard_cache.insert(cache_key, new_client.clone());
+        new_client
     }
 
     /// 为账号获取代理
@@ -358,6 +386,10 @@ impl ProxyPoolManager {
 
         // 更新内存中的绑定
         self.account_bindings.insert(account_id.clone(), proxy_id.clone());
+        
+        // [OPSEC] 立即清除该账号的物理 TLS 缓存池
+        self.account_client_cache.retain(|k, _| !k.starts_with(&account_id));
+        self.account_standard_cache.retain(|k, _| !k.starts_with(&account_id));
 
         // 持久化到配置文件
         self.persist_bindings().await;
@@ -369,6 +401,10 @@ impl ProxyPoolManager {
     /// 解绑账号代理
     pub async fn unbind_account_proxy(&self, account_id: String) {
         self.account_bindings.remove(&account_id);
+        
+        // [OPSEC] 立即清除该账号的物理 TLS 缓存池
+        self.account_client_cache.retain(|k, _| !k.starts_with(&account_id));
+        self.account_standard_cache.retain(|k, _| !k.starts_with(&account_id));
 
         // 持久化到配置文件
         self.persist_bindings().await;

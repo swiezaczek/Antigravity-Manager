@@ -205,14 +205,14 @@ pub async fn handle_chat_completions(
             }
         };
 
-        // [NEW v4.1.29] 获取完整 Token 对象用于动态规格查询
         let proxy_token = token_manager.get_token_by_id(&account_id);
         let mapped_model = token_manager
             .resolve_dynamic_model_for_account(&account_id, &mapped_model)
             .await;
 
         last_email = Some(email.clone());
-        info!("✓ Using account: {} (type: {})", email, config.request_type);
+        let email_masked = mask_email(&email); // [FIX] Mask email to prevent leakage in headers
+        info!("✓ Using account: {} (type: {})", email_masked, config.request_type);
 
         // 4. 转换请求 (返回内容包含 session_id 和 message_count)
         let (gemini_body, session_id, message_count) =
@@ -488,7 +488,7 @@ pub async fn handle_chat_completions(
                         .header("Cache-Control", "no-cache")
                         .header("Connection", "keep-alive")
                         .header("X-Accel-Buffering", "no")
-                        .header("X-Account-Email", &email)
+                        .header("X-Account-Email", &email_masked)
                         .header("X-Mapped-Model", &mapped_model)
                         .body(body)
                         .unwrap()
@@ -504,7 +504,7 @@ pub async fn handle_chat_completions(
                             return Ok((
                                 StatusCode::OK,
                                 [
-                                    ("X-Account-Email", email.as_str()),
+                                    ("X-Account-Email", email_masked.as_str()),
                                     ("X-Mapped-Model", mapped_model.as_str()),
                                 ],
                                 Json(full_response),
@@ -533,7 +533,7 @@ pub async fn handle_chat_completions(
             return Ok((
                 StatusCode::OK,
                 [
-                    ("X-Account-Email", email.as_str()),
+                    ("X-Account-Email", email_masked.as_str()),
                     ("X-Mapped-Model", mapped_model.as_str()),
                 ],
                 Json(openai_response),
@@ -642,7 +642,7 @@ pub async fn handle_chat_completions(
                     attempt + 1,
                     max_attempts
                 );
-                return Ok((status, [("X-Account-Email", email.as_str()), ("X-Mapped-Model", mapped_model.as_str())], error_text).into_response());
+                return Ok((status, [("X-Account-Email", email_masked.as_str()), ("X-Mapped-Model", mapped_model.as_str())], error_text).into_response());
             }
             */
 
@@ -763,7 +763,7 @@ pub async fn handle_chat_completions(
         return Ok((
             status,
             [
-                ("X-Account-Email", email.as_str()),
+                ("X-Account-Email", email_masked.as_str()),
                 ("X-Mapped-Model", mapped_model.as_str()),
             ],
             // [FIX] Return JSON error for better client compatibility
@@ -782,7 +782,7 @@ pub async fn handle_chat_completions(
     if let Some(email) = last_email {
         Ok((
             StatusCode::TOO_MANY_REQUESTS,
-            [("X-Account-Email", email), ("X-Mapped-Model", mapped_model)],
+            [("X-Account-Email", email_masked), ("X-Mapped-Model", mapped_model)],
             format!("All accounts exhausted. Last error: {}", last_error),
         )
             .into_response())
@@ -1240,8 +1240,8 @@ pub async fn handle_completions(
             .await;
 
         last_email = Some(email.clone());
-
-        info!("✓ Using account: {} (type: {})", email, config.request_type);
+        let email_masked = mask_email(&email); // [FIX] Mask email to prevent leakage
+        info!("✓ Using account: {} (type: {})", email_masked, config.request_type);
 
         let proxy_token = token_manager.get_token_by_id(&account_id);
         let (gemini_body, session_id, message_count) =
@@ -1388,7 +1388,7 @@ pub async fn handle_completions(
                         .header("Content-Type", "text/event-stream")
                         .header("Cache-Control", "no-cache")
                         .header("Connection", "keep-alive")
-                        .header("X-Account-Email", &email)
+                        .header("X-Account-Email", &email_masked)
                         .header("X-Mapped-Model", &mapped_model)
                         .body(Body::from_stream(combined_stream))
                         .unwrap()
@@ -1489,7 +1489,7 @@ pub async fn handle_completions(
                             return (
                                 StatusCode::OK,
                                 [
-                                    ("X-Account-Email", email.as_str()),
+                                    ("X-Account-Email", email_masked.as_str()),
                                     ("X-Mapped-Model", mapped_model.as_str()),
                                 ],
                                 Json(legacy_resp),
@@ -1546,7 +1546,7 @@ pub async fn handle_completions(
             return (
                 StatusCode::OK,
                 [
-                    ("X-Account-Email", email.as_str()),
+                    ("X-Account-Email", email_masked.as_str()),
                     ("X-Mapped-Model", mapped_model.as_str()),
                 ],
                 Json(legacy_resp),
@@ -1599,7 +1599,7 @@ pub async fn handle_completions(
             return (
                 status,
                 [
-                    ("X-Account-Email", email.as_str()),
+                    ("X-Account-Email", email_masked.as_str()),
                     ("X-Mapped-Model", mapped_model.as_str()),
                 ],
                 error_text,
@@ -1612,7 +1612,7 @@ pub async fn handle_completions(
     if let Some(email) = last_email {
         (
             StatusCode::TOO_MANY_REQUESTS,
-            [("X-Account-Email", email), ("X-Mapped-Model", mapped_model)],
+            [("X-Account-Email", email_masked), ("X-Mapped-Model", mapped_model)],
             format!("All accounts exhausted. Last error: {}", last_error),
         )
             .into_response()
@@ -1700,6 +1700,7 @@ async fn intercept_chat_to_image(
 
     match handle_images_generations_internal(state, img_req).await {
         Ok((email, img_res)) => {
+            let email_masked = mask_email(&email); // [FIX] Mask email
             // Extract URL
             let mut img_markdown = String::new();
             if let Some(data) = img_res.get("data").and_then(|v| v.as_array()) {
@@ -1751,7 +1752,7 @@ async fn intercept_chat_to_image(
                 Ok(Response::builder()
                     .header("Content-Type", "text/event-stream")
                     .header("Cache-Control", "no-cache")
-                    .header("X-Account-Email", email)
+                    .header("X-Account-Email", email_masked.as_str())
                     .body(body)
                     .unwrap())
             } else {
@@ -1774,7 +1775,7 @@ async fn intercept_chat_to_image(
                 Ok((
                     StatusCode::OK,
                     [
-                        ("X-Account-Email", email.as_str()),
+                        ("X-Account-Email", email_masked.as_str()),
                     ],
                     Json(resp)
                 ).into_response())
@@ -1793,7 +1794,7 @@ pub async fn handle_images_generations(
             StatusCode::OK,
             [
                 ("X-Mapped-Model", "dall-e-3"),
-                ("X-Account-Email", email_header.as_str()),
+                ("X-Account-Email", mask_email(&email_header).as_str()),
             ],
             Json(openai_response),
         )
@@ -2485,7 +2486,7 @@ pub async fn handle_images_edits(
         StatusCode::OK,
         [
             ("X-Mapped-Model", "dall-e-3"),
-            ("X-Account-Email", email_header.as_str()),
+            ("X-Account-Email", mask_email(&email_header).as_str()),
         ],
         Json(openai_response),
     )

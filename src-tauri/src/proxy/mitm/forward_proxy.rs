@@ -34,8 +34,9 @@ pub async fn start(ca: Arc<CertificateAuthority>, port: u16) -> Result<(), Strin
         match listener.accept().await {
             Ok((stream, peer)) => {
                 let ca = ca.clone();
+                let proxy_pool_clone = proxy_pool.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = handle_client(stream, ca).await {
+                    if let Err(e) = handle_client(stream, ca, proxy_pool_clone).await {
                         tracing::debug!("[MITM] Connection from {} error: {}", peer, e);
                     }
                 });
@@ -51,6 +52,7 @@ pub async fn start(ca: Arc<CertificateAuthority>, port: u16) -> Result<(), Strin
 async fn handle_client(
     mut stream: TcpStream,
     ca: Arc<CertificateAuthority>,
+    proxy_pool: Arc<crate::proxy::proxy_pool::ProxyPoolManager>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // 1. Read the CONNECT request line
     let mut reader = BufReader::new(&mut stream);
@@ -86,25 +88,11 @@ async fn handle_client(
         .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
         .await?;
 
-    // [MITM v7] Selective TLS Interception
-    // Only intercept cloudcode-pa.googleapis.com (for telemetry/metrics manipulation)
-    // and play.googleapis.com (to intercept and DROP Clearcut hardware metrics).
-    // Everything else (oauth, unleash) passes purely as a raw TCP tunnel to avoid TLS fingerprinting
-    // and HTTP parsing timeouts.
-    if !host.contains("cloudcode-pa.googleapis.com") && !host.contains("play.googleapis.com") {
-        let addr = format!("{}:{}", host, port);
-        match TcpStream::connect(&addr).await {
-            Ok(mut upstream) => {
-                tracing::debug!("[MITM] Blind TCP tunnel established for {}", host);
-                let _ = tokio::io::copy_bidirectional(&mut stream, &mut upstream).await;
-            }
-            Err(e) => {
-                tracing::debug!("[MITM] Failed to connect to upstream {}: {}", host, e);
-            }
-        }
-        return Ok(());
-    }
-
+    // [MITM v8] Universal TLS Interception
+    // We intercept ALL domains (cloudcode, play, oauth, unleash) to force them through
+    // the `rquest` ProxyPool routing engine. Blind TCP tunneling is disabled to prevent
+    // host IP leakage for side-channel traffic.
+    
     // 3. TLS handshake with the client (using our dynamic cert for this host)
     let server_config = ca.get_server_config(&host);
     let acceptor = TlsAcceptor::from(server_config);
@@ -112,7 +100,7 @@ async fn handle_client(
 
     // 4. Handle HTTP request(s) inside the TLS tunnel (support keep-alive)
     loop {
-        match handle_tunneled_request(&mut tls_stream, &host).await {
+        match handle_tunneled_request(&mut tls_stream, &host, &proxy_pool).await {
             Ok(true) => continue,  // keep-alive: handle next request
             Ok(false) => break,    // connection closed cleanly
             Err(e) => {
@@ -130,6 +118,7 @@ async fn handle_client(
 async fn handle_tunneled_request(
     tls_stream: &mut tokio_rustls::server::TlsStream<TcpStream>,
     host: &str,
+    proxy_pool: &Arc<crate::proxy::proxy_pool::ProxyPoolManager>,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
     // Read the HTTP request line
     let mut buf_reader = BufReader::new(&mut *tls_stream);
@@ -188,9 +177,9 @@ async fn handle_tunneled_request(
             Ok(keep_alive)
         }
         rules::Action::Pass => {
-            // 6. Connect to real upstream server
+            // 6. Connect to real upstream server using ProxyPool (generic token)
             let upstream_response =
-                forward_to_upstream(host, method, path, &headers, &body).await?;
+                forward_to_upstream_with_proxy(host, method, path, &headers, &body, proxy_pool, None).await?;
 
             tracing::debug!(
                 "[MITM] ✓ Passed: {} {} {} ({} bytes → {} bytes response)",
@@ -204,11 +193,11 @@ async fn handle_tunneled_request(
         }
         rules::Action::RewriteAgentTelemetry => {
             tracing::debug!("[MITM] 📝 Rewriting Agent Telemetry for {}", path);
-            let (new_headers, new_body) = rewrite_agent_telemetry(headers, body);
+            let (new_headers, new_body, account_id) = rewrite_agent_telemetry(headers, body);
             
-            // 6. Connect to real upstream server
+            // 6. Connect to real upstream server using ProxyPool mapped to the telemetry account
             let upstream_response =
-                forward_to_upstream(host, method, path, &new_headers, &new_body).await?;
+                forward_to_upstream_with_proxy(host, method, path, &new_headers, &new_body, proxy_pool, account_id.as_deref()).await?;
 
             tracing::debug!(
                 "[MITM] ✓ Passed (Rewritten): {} {} {} ({} bytes → {} bytes response)",
@@ -276,67 +265,61 @@ async fn handle_tunneled_request(
     }
 }
 
-/// Forward a request to the real upstream server and return the raw HTTP response.
-async fn forward_to_upstream(
+async fn forward_to_upstream_with_proxy(
     host: &str,
     method: &str,
     path: &str,
     headers: &[String],
     body: &[u8],
+    proxy_pool: &Arc<crate::proxy::proxy_pool::ProxyPoolManager>,
+    account_id: Option<&str>,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
-    // Connect to real server using native TLS (system trust store)
-    let addr = format!("{}:443", host);
-    let tcp = TcpStream::connect(&addr).await?;
-
-    // Use rustls with system roots for upstream connection
-    let mut root_store = tokio_rustls::rustls::RootCertStore::empty();
-    let native_certs = rustls_native_certs::load_native_certs();
-    for cert in native_certs.certs {
-        let _ = root_store.add(cert);
-    }
-
-    let client_config = Arc::new(
-        tokio_rustls::rustls::ClientConfig::builder()
-            .with_root_certificates(root_store)
-            .with_no_client_auth(),
-    );
-
-    let connector = tokio_rustls::TlsConnector::from(client_config);
-    let server_name = tokio_rustls::rustls::pki_types::ServerName::try_from(host.to_string())?;
-    let mut upstream_tls = connector.connect(server_name, tcp).await?;
-
-    // Build and send HTTP request
-    let mut request = format!("{} {} HTTP/1.1\r\n", method, path);
+    // 1. Obtain a standard proxy client (generic if account_id is None)
+    let client = proxy_pool.get_effective_standard_client(account_id, 30).await;
+    
+    let url = format!("https://{}{}", host, path);
+    // Convert method string to HTTP Method
+    let reqwest_method = reqwest::Method::from_bytes(method.as_bytes())?;
+    
+    // 2. Build HTTP request
+    let mut req_builder = client.request(reqwest_method, &url);
     for h in headers {
-        request.push_str(h);
-        request.push_str("\r\n");
-    }
-    request.push_str("\r\n");
-
-    upstream_tls.write_all(request.as_bytes()).await?;
-    if !body.is_empty() {
-        upstream_tls.write_all(body).await?;
-    }
-    upstream_tls.flush().await?;
-
-    // Read the full HTTP response
-    let mut response = Vec::new();
-    let mut buf = [0u8; 8192];
-    loop {
-        match tokio::time::timeout(
-            std::time::Duration::from_secs(30),
-            upstream_tls.read(&mut buf),
-        )
-        .await
-        {
-            Ok(Ok(0)) => break,
-            Ok(Ok(n)) => response.extend_from_slice(&buf[..n]),
-            Ok(Err(_)) => break,
-            Err(_) => break, // timeout
+        if let Some((k, v)) = h.split_once(':') {
+            req_builder = req_builder.header(k.trim(), v.trim());
         }
     }
-
-    Ok(response)
+    
+    if !body.is_empty() {
+        req_builder = req_builder.body(body.to_vec());
+    }
+    
+    // 3. Execute
+    let response = req_builder.send().await?;
+    
+    // 4. Reconstruct raw HTTP/1.1 response bytes for the TLS tunnel
+    let mut out = Vec::new();
+    let status_code = response.status().as_u16();
+    let reason = response.status().canonical_reason().unwrap_or("");
+    let status_line = format!("HTTP/1.1 {} {}\r\n", status_code, reason);
+    out.extend_from_slice(status_line.as_bytes());
+    
+    for (k, v) in response.headers() {
+        // Skip transfer-encoding to enforce Content-Length
+        if k.as_str().eq_ignore_ascii_case("transfer-encoding") { continue; }
+        // We will compute new Content-Length
+        if k.as_str().eq_ignore_ascii_case("content-length") { continue; }
+        
+        out.extend_from_slice(k.as_str().as_bytes());
+        out.extend_from_slice(b": ");
+        out.extend_from_slice(v.as_bytes());
+        out.extend_from_slice(b"\r\n");
+    }
+    
+    let body_bytes = response.bytes().await?;
+    out.extend_from_slice(format!("Content-Length: {}\r\n\r\n", body_bytes.len()).as_bytes());
+    out.extend_from_slice(&body_bytes);
+    
+    Ok(out)
 }
 
 /// Parse "host:port" into (host, port). Defaults to port 443.
@@ -350,16 +333,16 @@ fn parse_host_port(target: &str) -> Result<(String, u16), Box<dyn std::error::Er
 }
 
 /// Rewrite native Agent Telemetry to map to our proxy-allocated Account Token and Project ID
-fn rewrite_agent_telemetry(mut headers: Vec<String>, body: Vec<u8>) -> (Vec<String>, Vec<u8>) {
+fn rewrite_agent_telemetry(mut headers: Vec<String>, body: Vec<u8>) -> (Vec<String>, Vec<u8>, Option<String>) {
     if body.is_empty() {
-        return (headers, body);
+        return (headers, body, None);
     }
 
     let mut json_val: serde_json::Value = match serde_json::from_slice(&body) {
         Ok(v) => v,
         Err(e) => {
             tracing::warn!("[MITM] Failed to parse telemetry JSON: {}", e);
-            return (headers, body);
+            return (headers, body, None);
         }
     };
 
@@ -496,9 +479,7 @@ fn rewrite_agent_telemetry(mut headers: Vec<String>, body: Vec<u8>) -> (Vec<Stri
                         *h = format!("Content-Length: {}", new_body.len());
                     }
                 }
-            }
-
-            return (headers, new_body);
+            return (headers, new_body, Some(proxy_token.account_id.clone()));
         } else {
             tracing::debug!("[MITM] Unmapped trajectoryId: {}", uuid);
         }
@@ -506,5 +487,5 @@ fn rewrite_agent_telemetry(mut headers: Vec<String>, body: Vec<u8>) -> (Vec<Stri
         tracing::debug!("[MITM] No trajectoryId found in telemetry payload");
     }
 
-    (headers, body)
+    (headers, body, None)
 }

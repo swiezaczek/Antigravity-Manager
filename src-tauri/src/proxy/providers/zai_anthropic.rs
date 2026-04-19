@@ -152,10 +152,24 @@ pub async fn forward_anthropic_json(
         let mapped = map_model_for_zai(model, &zai);
         body["model"] = Value::String(mapped.clone());
 
+        // [FIX #7] Generate per-conversation session_id instead of hardcoded "zai-session"
+        // This prevents signature cross-contamination between different ZAI conversations
+        let zai_session_id = {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            // Hash first user message content for conversation-stable key
+            if let Some(messages) = body.get("messages").and_then(|m| m.as_array()) {
+                if let Some(first_msg) = messages.first() {
+                    first_msg.to_string().hash(&mut hasher);
+                }
+            }
+            format!("zai:{:016x}", hasher.finish())
+        };
+
         // [FIX] Caching for z.ai (to support thinking-filter)
         if let Some(sig) = body.get("thinking").and_then(|t| t.get("signature")).and_then(|s| s.as_str()) {
             crate::proxy::SignatureCache::global().cache_session_signature(
-                "zai-session", 
+                &zai_session_id, 
                 sig.to_string(), 
                 message_count
             );

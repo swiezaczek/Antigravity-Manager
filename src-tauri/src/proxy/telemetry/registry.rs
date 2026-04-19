@@ -71,6 +71,27 @@ impl TelemetryRegistry {
         let max_age = Duration::from_secs(600); // 10 minutes
         self.map.retain(|_, v| now.duration_since(v.created_at) < max_age);
     }
+
+    /// [FIX #2] Start periodic garbage collection (every 60s) to prevent unbounded growth
+    pub fn start_periodic_cleanup() {
+        tokio::spawn(async {
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                let registry = TelemetryRegistry::global();
+                let before = registry.map.len();
+                registry.cleanup_old();
+                let after = registry.map.len();
+                if before != after {
+                    tracing::debug!(
+                        "[TelemetryRegistry] Periodic GC: {} → {} entries",
+                        before,
+                        after
+                    );
+                }
+            }
+        });
+    }
 }
 
 /// Extract trajectory UUID from a wrapper requestId string.

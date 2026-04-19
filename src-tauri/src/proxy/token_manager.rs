@@ -48,6 +48,7 @@ pub struct TokenManager {
     session_accounts: Arc<DashMap<String, String>>, // 新增：会话与账号映射 (SessionID -> AccountID)
     preferred_account_id: Arc<tokio::sync::RwLock<Option<String>>>, // [FIX #820] 优先使用的账号ID（固定账号模式）
     health_scores: Arc<DashMap<String, f32>>,                       // account_id -> health_score
+    email_index: Arc<DashMap<String, String>>,                      // [FIX #5] email -> account_id (reverse index for O(1) lookup)
     circuit_breaker_config: Arc<tokio::sync::RwLock<crate::models::CircuitBreakerConfig>>, // [NEW] 熔断配置缓存
     
     // [NEW] 按账号分配的同步刷新锁。
@@ -76,6 +77,7 @@ impl TokenManager {
             session_accounts: Arc::new(DashMap::new()),
             preferred_account_id: Arc::new(tokio::sync::RwLock::new(None)), // [FIX #820]
             health_scores: Arc::new(DashMap::new()),
+            email_index: Arc::new(DashMap::new()),
             circuit_breaker_config: Arc::new(tokio::sync::RwLock::new(
                 crate::models::CircuitBreakerConfig::default(),
             )),
@@ -133,6 +135,7 @@ impl TokenManager {
 
         // Reload should reflect current on-disk state (accounts can be added/removed/disabled).
         self.tokens.clear();
+        self.email_index.clear();
         self.current_index.store(0, Ordering::SeqCst);
         {
             let mut last_used = self.last_used_account.lock().await;
@@ -156,6 +159,7 @@ impl TokenManager {
             match self.load_single_account(&path).await {
                 Ok(Some(token)) => {
                     let account_id = token.account_id.clone();
+                    self.email_index.insert(token.email.clone(), account_id.clone());
                     self.tokens.insert(account_id, token);
                     count += 1;
                 }
@@ -183,6 +187,13 @@ impl TokenManager {
 
         match self.load_single_account(&path).await {
             Ok(Some(token)) => {
+                // [FIX #5] Update email reverse index (handle potential email changes)
+                if let Some(old_token) = self.tokens.get(account_id) {
+                    if old_token.email != token.email {
+                        self.email_index.remove(&old_token.email);
+                    }
+                }
+                self.email_index.insert(token.email.clone(), account_id.to_string());
                 self.tokens.insert(account_id.to_string(), token);
                 // [NEW] 重新加载账号时自动清除该账号的限流记录
                 self.clear_rate_limit(account_id);
@@ -210,7 +221,8 @@ impl TokenManager {
     /// 从内存中彻底移除指定账号及其关联数据 (Issue #1477)
     pub fn remove_account(&self, account_id: &str) {
         // ... (省略原有逻辑)
-        if self.tokens.remove(account_id).is_some() {
+        if let Some((_, removed_token)) = self.tokens.remove(account_id) {
+            self.email_index.remove(&removed_token.email);
             tracing::info!("[Proxy] Removed account {} from memory cache", account_id);
         }
         self.health_scores.remove(account_id);
@@ -369,7 +381,17 @@ impl TokenManager {
 
                 let updated_json =
                     serde_json::to_string_pretty(&account).map_err(|e| e.to_string())?;
-                std::fs::write(path, updated_json).map_err(|e| e.to_string())?;
+                // [FIX #4] Atomic write: temp file + rename to prevent corruption on crash
+                let tmp_path = path.with_extension("json.tmp");
+                std::fs::write(&tmp_path, &updated_json).map_err(|e| e.to_string())?;
+                if let Err(e) = std::fs::rename(&tmp_path, path) {
+                    // Windows fallback: rename may fail if target exists
+                    let _ = std::fs::remove_file(path);
+                    std::fs::rename(&tmp_path, path).map_err(|e2| {
+                        let _ = std::fs::remove_file(&tmp_path);
+                        format!("Atomic write failed: rename1={}, rename2={}", e, e2)
+                    })?;
+                }
                 tracing::info!(
                     "Validation block expired and cleared for account: {}",
                     account
@@ -1834,7 +1856,9 @@ impl TokenManager {
             .map_err(|e| format!("写入文件失败: {}", e))?;
 
         // 【修复 Issue #3】从内存中移除禁用的账号，防止被60s锁定逻辑继续使用
-        self.tokens.remove(account_id);
+        if let Some((_, disabled_token)) = self.tokens.remove(account_id) {
+            self.email_index.remove(&disabled_token.email);
+        }
 
         tracing::warn!("Account disabled: {} ({:?})", account_id, path);
         Ok(())
@@ -1881,6 +1905,29 @@ impl TokenManager {
             .map_err(|e| format!("写入文件失败: {}", e))?;
 
         tracing::debug!("已保存刷新后的 token 到账号 {}", account_id);
+        Ok(())
+    }
+
+    /// 后台主动刷新的静默存储方法（防止在定时锁期间获取不到 context）
+    pub async fn save_refreshed_token_silent(&self, account_id: &str, path: &std::path::PathBuf, token_response: &crate::modules::oauth::TokenResponse, new_now: i64) -> Result<(), String> {
+        let mut content: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(path).map_err(|e| format!("读取文件失败: {}", e))?
+        ).map_err(|e| format!("解析 JSON 失败: {}", e))?;
+
+        content["token"]["access_token"] = serde_json::Value::String(token_response.access_token.clone());
+        content["token"]["expires_in"] = serde_json::Value::Number(token_response.expires_in.into());
+        content["token"]["expiry_timestamp"] = serde_json::Value::Number((new_now + token_response.expires_in).into());
+
+        std::fs::write(path, serde_json::to_string_pretty(&content).unwrap())
+            .map_err(|e| format!("写入文件失败: {}", e))?;
+
+        // 同步更新内存
+        if let Some(mut entry) = self.tokens.get_mut(account_id) {
+            entry.access_token = token_response.access_token.clone();
+            entry.expires_in = token_response.expires_in;
+            entry.timestamp = new_now + token_response.expires_in;
+        }
+
         Ok(())
     }
 
@@ -1933,7 +1980,7 @@ impl TokenManager {
             .unwrap_or_else(|| "bamboo-precept-lgxtn".to_string());
 
         // 检查是否过期 (提前5分钟)
-        if now < timestamp + expires_in - 300 {
+        if now < timestamp - 300 {
             return Ok((current_access_token, project_id, email.to_string(), account_id, 0));
         }
 
@@ -1949,7 +1996,7 @@ impl TokenManager {
                 if let Some(mut entry) = self.tokens.get_mut(&account_id) {
                     entry.access_token = token_response.access_token.clone();
                     entry.expires_in = token_response.expires_in;
-                    entry.timestamp = new_now;
+                    entry.timestamp = new_now + token_response.expires_in; // [FIX] Properly set to expiry time
                 }
 
                 // 保存到磁盘
@@ -2037,10 +2084,8 @@ impl TokenManager {
     /// 【替代方案】通过 email 查找对应的 account_id
     /// 用于将 handlers 传入的 email 转换为 tracker 使用的 account_id
     fn email_to_account_id(&self, email: &str) -> Option<String> {
-        self.tokens
-            .iter()
-            .find(|entry| entry.value().email == email)
-            .map(|entry| entry.value().account_id.clone())
+        // [FIX #5] O(1) lookup via reverse index instead of O(n) scan
+        self.email_index.get(email).map(|v| v.clone())
     }
 
     /// 清除指定账号的限流记录
@@ -2588,12 +2633,8 @@ impl TokenManager {
 
     /// Helper to find account ID by email
     pub fn get_account_id_by_email(&self, email: &str) -> Option<String> {
-        for entry in self.tokens.iter() {
-            if entry.value().email == email {
-                return Some(entry.key().clone());
-            }
-        }
-        None
+        // [FIX #5] O(1) lookup via reverse index instead of O(n) scan
+        self.email_index.get(email).map(|v| v.clone())
     }
 
     /// Set validation blocked status for an account (internal)

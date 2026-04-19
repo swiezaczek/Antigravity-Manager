@@ -259,6 +259,80 @@ pub fn start_scheduler(app_handle: Option<tauri::AppHandle>, proxy_state: crate:
             }
         }
     });
+
+    // [NEW] Proactive OAuth Token Refresh Scheduler
+    let proxy_state_for_token = proxy_state.clone();
+    tauri::async_runtime::spawn(async move {
+        logger::log_info("Proactive Token Refresh Scheduler started.");
+
+        // Wstępny delay aby aplikacja zdążyła się załadować w pełni po starcie
+        tokio::time::sleep(Duration::from_secs(10)).await;
+
+        loop {
+            let token_manager = &proxy_state_for_token.token_manager;
+            if token_manager.len() == 0 {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                continue;
+            }
+
+            let Ok(accounts) = account::list_accounts() else {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                continue;
+            };
+
+            let now = chrono::Utc::now().timestamp();
+            let mut action_taken = false;
+            let mut next_wakeup: i64 = 3600; // Max sleep time (1 hour = token lifecycle)
+
+            for acc in accounts {
+                if !acc.enabled { continue; }
+                
+                if let Ok(content) = std::fs::read_to_string(&acc.file_path) {
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+                        if let Some(expiry) = json.get("token").and_then(|t| t.get("expiry_timestamp")).and_then(|e| e.as_i64()) {
+                            let time_left = expiry - now;
+                            use rand::Rng;
+                            let random_refresh_boundary: i64 = rand::thread_rng().gen_range(180..600); // 3 do 10 min
+                            
+                            if time_left > 0 && time_left <= random_refresh_boundary {
+                                logger::log_info(&format!("[TokenRefresh] Proactively refreshing token for {} (Expires in {}s)", acc.email, time_left));
+                                
+                                if let Some(refresh_token) = json.get("token").and_then(|t| t.get("refresh_token")).and_then(|e| e.as_str()) {
+                                    match crate::modules::oauth::refresh_access_token(refresh_token, Some(&acc.id)).await {
+                                        Ok(token_response) => {
+                                            logger::log_info(&format!("[TokenRefresh] Successfully proactively refreshed token for {}", acc.email));
+                                            let new_now = chrono::Utc::now().timestamp();
+                                            let _ = token_manager.save_refreshed_token_silent(&acc.id, &acc.file_path, &token_response, new_now).await;
+                                        }
+                                        Err(e) => {
+                                             logger::log_warn(&format!("[TokenRefresh] Proactive refresh failed for {}: {}", acc.email, e));
+                                        }
+                                    }
+                                }
+                                action_taken = true;
+                            } else if time_left > random_refresh_boundary {
+                                // Obliczamy idealny czas by wstać losowo w przedziale 3-10 min przed wygaśnięciem tego konkretnego tokena
+                                let time_until_refresh = time_left - random_refresh_boundary;
+                                if time_until_refresh < next_wakeup {
+                                    next_wakeup = time_until_refresh;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !action_taken {
+                // Śpimy dokładnie do momentu, w którym którykolwiek token wpadnie w próg 3-10 min do wygaśnięcia
+                let sleep_secs = next_wakeup.max(15); 
+                logger::log_info(&format!("[TokenRefresh] Czekanie: Usypianie na {}s (do momentu wygaśniecia najbliższego tokena)", sleep_secs));
+                tokio::time::sleep(Duration::from_secs(sleep_secs as u64)).await;
+            } else {
+                // Po udanym re-freshu wykonujemy szybki sleep, aby zaktualizować pamięć przed kolejnym obrotem pętli i zebrać nowe `time_left`
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+        }
+    });
 }
 
 /// Trigger immediate smart warmup check for a single account

@@ -379,7 +379,14 @@ pub fn transform_claude_request_in(
     // [NEW] Generate session ID for signature tracking
     // This enables session-isolated signature storage, preventing cross-conversation pollution
     let session_id = SessionManager::extract_session_id(claude_req);
-    tracing::debug!("[Claude-Request] Session ID: {}", session_id);
+    // [FIX #6] Scope session_id with account_id to prevent cross-account SignatureCache leakage
+    // Without this, account rotation during retry would cause Account B to use Account A's signatures
+    let session_id = if let Some(aid) = account_id {
+        format!("{}:{}", aid, session_id)
+    } else {
+        session_id
+    };
+    tracing::debug!("[Claude-Request] Session ID (scoped): {}", session_id);
 
     // 检测是否有联网工具 (server tool or built-in tool)
     let has_web_search_tool = claude_req

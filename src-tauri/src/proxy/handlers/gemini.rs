@@ -155,13 +155,17 @@ pub async fn handle_generate(
             .await;
 
         last_email = Some(email.clone());
-        info!("✓ Using account: {} (type: {})", email, config.request_type);
+        let email_masked = mask_email(&email); // [FIX] Mask email
+        info!("✓ Using account: {} (type: {})", email_masked, config.request_type);
+
+        // [FIX #6] Scope session_id with account_id to prevent cross-account SignatureCache leakage
+        let scoped_session_id = format!("{}:{}", account_id, session_id);
 
         // 5. 包装请求 (project injection)
         // [FIX #765] Pass session_id to wrap_request for signature injection
         // [NEW] 获取完整 Token 对象以注入动态规格 (dynamic > static default > 65535)
         let token_obj = token_manager.get_token_by_id(&account_id);
-        let wrapped_body = wrap_request(&body, &project_id, &mapped_model, Some(account_id.as_str()), Some(&session_id), token_obj.as_ref());
+        let wrapped_body = wrap_request(&body, &project_id, &mapped_model, Some(account_id.as_str()), Some(&scoped_session_id), token_obj.as_ref());
 
         if debug_logger::is_enabled(&debug_cfg) {
             let payload = json!({
@@ -308,7 +312,7 @@ pub async fn handle_generate(
                     meta,
                 );
                 let mut buffer = BytesMut::new();
-                let s_id = session_id.clone(); // Clone for stream closure
+                let s_id = scoped_session_id.clone(); // [FIX #6] Use account-scoped session_id
 
                 // [FIX #859] Implement peek logic for Gemini stream to prevent 0-token 200 OK
                 let mut first_chunk = None;
@@ -489,7 +493,7 @@ pub async fn handle_generate(
                         .header("Cache-Control", "no-cache")
                         .header("Connection", "keep-alive")
                         .header("X-Accel-Buffering", "no")
-                        .header("X-Account-Email", &email)
+                        .header("X-Account-Email", &email_masked)
                         .header("X-Mapped-Model", &mapped_model)
                         .body(body)
                         .unwrap()
@@ -497,7 +501,7 @@ pub async fn handle_generate(
                 } else {
                     // Collect to JSON
                     use crate::proxy::mappers::gemini::collector::collect_stream_to_json;
-                    match collect_stream_to_json(Box::pin(stream), &s_id).await {
+                    match collect_stream_to_json(Box::pin(stream), &scoped_session_id).await {
                         Ok(gemini_resp) => {
                             info!(
                                 "[{}] ✓ Stream collected and converted to JSON (Gemini)",
@@ -507,7 +511,7 @@ pub async fn handle_generate(
                             return Ok((
                                 StatusCode::OK,
                                 [
-                                    ("X-Account-Email", email.as_str()),
+                                    ("X-Account-Email", email_masked.as_str()),
                                     ("X-Mapped-Model", mapped_model.as_str()),
                                 ],
                                 Json(unwrapped),
@@ -557,7 +561,7 @@ pub async fn handle_generate(
                                     part.get("thoughtSignature").and_then(|s| s.as_str())
                                 {
                                     crate::proxy::SignatureCache::global().cache_session_signature(
-                                        &session_id,
+                                        &scoped_session_id,
                                         sig.to_string(),
                                         1,
                                     );
@@ -679,7 +683,7 @@ pub async fn handle_generate(
         return Ok((
             status,
             [
-                ("X-Account-Email", email.as_str()),
+                ("X-Account-Email", email_masked.as_str()),
                 ("X-Mapped-Model", mapped_model.as_str()),
             ],
             // [FIX] Return JSON error
@@ -697,7 +701,7 @@ pub async fn handle_generate(
     if let Some(email) = last_email {
         Ok((
             StatusCode::TOO_MANY_REQUESTS,
-            [("X-Account-Email", email)],
+            [("X-Account-Email", mask_email(&email))],
             format!("All accounts exhausted. Last error: {}", last_error),
         )
             .into_response())

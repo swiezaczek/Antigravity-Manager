@@ -584,7 +584,10 @@ pub async fn handle_messages(
         };
 
         last_email = Some(email.clone());
-        info!("✓ Using account: {} (type: {})", email, config.request_type);
+        let email_masked = mask_email(&email); // [FIX] Mask email
+        info!("✓ Using account: {} (type: {})", email_masked, config.request_type);
+        // [FIX #6] Scope session_id with account_id for streaming SignatureCache isolation
+        let scoped_session_id = format!("{}:{}", account_id, session_id_str);
         
         
         // ===== 【优化】后台任务智能检测与降级 =====
@@ -804,7 +807,7 @@ pub async fn handle_messages(
             Err(e) => {
                  let headers = [
                     ("X-Mapped-Model", request_with_mapped.model.as_str()),
-                    ("X-Account-Email", email.as_str()),
+                    ("X-Account-Email", email_masked.as_str()),
                 ];
                  return (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -973,7 +976,7 @@ pub async fn handle_messages(
                     gemini_stream,
                     trace_id.clone(),
                     email.clone(),
-                    Some(session_id_str.clone()),
+                    Some(scoped_session_id.clone()), // [FIX #6] Use account-scoped session_id
                     scaling_enabled,
                     context_limit,
                     Some(raw_estimated), // [FIX] Pass estimated tokens for calibrator learning
@@ -1069,7 +1072,7 @@ pub async fn handle_messages(
                                 .header(header::CACHE_CONTROL, "no-cache")
                                 .header(header::CONNECTION, "keep-alive")
                                 .header("X-Accel-Buffering", "no")
-                                .header("X-Account-Email", &email)
+                                .header("X-Account-Email", &email_masked)
                                 .header("X-Mapped-Model", &request_with_mapped.model)
                                 .header("X-Context-Purified", if is_purified { "true" } else { "false" })
                                 .body(Body::from_stream(combined_stream_with_metrics))
@@ -1084,7 +1087,7 @@ pub async fn handle_messages(
                                     return Response::builder()
                                         .status(StatusCode::OK)
                                         .header(header::CONTENT_TYPE, "application/json")
-                                        .header("X-Account-Email", &email)
+                                        .header("X-Account-Email", &email_masked)
                                         .header("X-Mapped-Model", &request_with_mapped.model)
                                         .header("X-Context-Purified", if is_purified { "true" } else { "false" })
                                         .body(Body::from(serde_json::to_string(&full_response).unwrap()))
@@ -1134,7 +1137,8 @@ pub async fn handle_messages(
 
                 // 转换
                 // [FIX #765] Pass session_id and model_name for signature caching
-                let s_id_owned = session_id.map(|s| s.to_string());
+                // [FIX #6] Use account-scoped session_id
+                let s_id_owned = Some(scoped_session_id.clone());
                 // 转换
                 let claude_response = match transform_response(
                     &gemini_response,
@@ -1164,7 +1168,7 @@ pub async fn handle_messages(
                     cache_info
                 );
 
-                return (StatusCode::OK, [("X-Account-Email", email.as_str()), ("X-Mapped-Model", request_with_mapped.model.as_str())], Json(claude_response)).into_response();
+                return (StatusCode::OK, [("X-Account-Email", email_masked.as_str()), ("X-Mapped-Model", request_with_mapped.model.as_str())], Json(claude_response)).into_response();
             }
         }
         
@@ -1359,7 +1363,7 @@ pub async fn handle_messages(
             if status_code == 400 && (error_text.contains("too long") || error_text.contains("exceeds") || error_text.contains("limit")) {
                  return (
                     StatusCode::BAD_REQUEST,
-                    [("X-Account-Email", email.as_str())],
+                    [("X-Account-Email", email_masked.as_str())],
                     Json(json!({
                         "id": "err_prompt_too_long",
                         "type": "error",
@@ -1375,7 +1379,7 @@ pub async fn handle_messages(
             // 不可重试的错误，直接返回
             error!("[{}] Non-retryable error {}: {}", trace_id, status_code, error_text);
             return (status, [
-                ("X-Account-Email", email.as_str()),
+                ("X-Account-Email", email_masked.as_str()),
                 ("X-Mapped-Model", request_with_mapped.model.as_str())
             ], error_text).into_response();
         }
@@ -1385,7 +1389,7 @@ pub async fn handle_messages(
     if let Some(email) = last_email {
         // [FIX] Include X-Mapped-Model in exhaustion error
         let mut headers = HeaderMap::new();
-        headers.insert("X-Account-Email", header::HeaderValue::from_str(&email).unwrap());
+        headers.insert("X-Account-Email", header::HeaderValue::from_str(&mask_email(&email)).unwrap());
         if let Some(model) = last_mapped_model {
              if let Ok(v) = header::HeaderValue::from_str(&model) {
                 headers.insert("X-Mapped-Model", v);

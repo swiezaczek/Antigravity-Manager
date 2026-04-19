@@ -195,17 +195,17 @@ impl UpstreamClient {
                 // Try to get per-account proxy
                 match pool.get_proxy_for_account(acc_id).await {
                     Ok(Some(proxy_cfg)) => {
-                        // Check cache
-                        if let Some(client) = self.client_cache.get(&proxy_cfg.entry_id) {
+                        // [OPSEC] Check cache: Keyed by account_id instead of proxy_id to isolate TLS connections
+                        if let Some(client) = self.client_cache.get(acc_id) {
                             return client.clone();
                         }
                         // Build new client and cache it
                         match self.build_client_with_proxy(proxy_cfg.clone()) {
                             Ok(client) => {
                                 self.client_cache
-                                    .insert(proxy_cfg.entry_id.clone(), client.clone());
+                                    .insert(acc_id.to_string(), client.clone());
                                 tracing::info!(
-                                    "Using ProxyPool proxy ID: {} for account: {}",
+                                    "Using ProxyPool proxy ID: {} for account: {} (Isolated Cache)",
                                     proxy_cfg.entry_id,
                                     acc_id
                                 );
@@ -288,24 +288,19 @@ impl UpstreamClient {
         let client = self.get_client(account_id).await;
 
         // 构建 Headers (所有端点复用)
-        let mut headers = header::HeaderMap::new();
-        headers.insert(
-            header::CONTENT_TYPE,
-            header::HeaderValue::from_static("application/json"),
-        );
-        headers.insert(
-            header::AUTHORIZATION,
-            header::HeaderValue::from_str(&format!("Bearer {}", access_token))
-                .map_err(|e| e.to_string())?,
-        );
+        // [OPSEC v4.2.0] Strict Consistency: Use standardized header profiles matching Gaxios / Go LS
+        let mut headers = if method.contains("generateContent") {
+            crate::utils::http::go_ls_api_headers(access_token)
+        } else {
+            crate::utils::http::google_api_headers(access_token)
+        };
 
-        headers.insert(
-            header::USER_AGENT,
-            header::HeaderValue::from_str(&self.get_user_agent().await).unwrap_or_else(|e| {
-                tracing::warn!("Invalid User-Agent header value, using fallback: {}", e);
-                header::HeaderValue::from_static("antigravity")
-            }),
-        );
+        // If there's an explicit UA override in the client
+        if let Some(ua_override) = self.user_agent_override.read().await.as_ref() {
+            if let Ok(hv) = header::HeaderValue::from_str(ua_override) {
+                headers.insert(header::USER_AGENT, hv);
+            }
+        }
 
         // [ENHANCED] 注入 Antigravity 官方客户端关键特征 Headers
         // [OPSEC] 1. Zero-Emission: Do NOT inject x-client-name, x-client-version, x-machine-id, x-vscode-sessionid.

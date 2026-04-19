@@ -11,7 +11,13 @@ pub fn transform_openai_request(
     mapped_model: &str,
     token: Option<&ProxyToken>,
 ) -> (Value, String, usize) {
-    let session_id = crate::proxy::session_manager::SessionManager::extract_openai_session_id(request);
+    let session_id_raw = crate::proxy::session_manager::SessionManager::extract_openai_session_id(request);
+    // [FIX #6] Scope session_id with account_id to prevent cross-account SignatureCache leakage
+    let session_id = if let Some(t) = token {
+        format!("{}:{}", t.account_id, session_id_raw)
+    } else {
+        session_id_raw
+    };
     let message_count = request.messages.len();
     // 将 OpenAI 工具转为 Value 数组以便探测
     let tools_val = request
