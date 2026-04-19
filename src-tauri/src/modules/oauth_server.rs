@@ -390,6 +390,10 @@ pub async fn start_oauth_flow(app_handle: Option<tauri::AppHandle>, oauth_client
             if let Ok(mut child) = std::process::Command::new(browser)
                 .arg(&path_arg)
                 .arg("--no-first-run")
+                .arg("--incognito")                    // [OPSEC] Belt+suspenders: no persistent state even within ephemeral profile
+                .arg("--disable-extensions")           // [OPSEC] Prevent extensions from leaking identity
+                .arg("--disable-sync")                 // [OPSEC] Prevent Chrome Sync from linking accounts
+                .arg("--disable-background-networking") // [OPSEC] Prevent prefetch/telemetry during login
                 .arg("--new-window")
                 .arg(&auth_url)
                 .spawn() 
