@@ -129,7 +129,7 @@ impl UpstreamClient {
 
         // [OPSEC Phase Z] Apply strict canonical ordering based on IDE client type
         if is_go_ls {
-            let go_order = &[
+            let go_order = vec![
                 header::HOST,
                 header::USER_AGENT,
                 header::CONTENT_LENGTH,
@@ -139,7 +139,7 @@ impl UpstreamClient {
             ];
             builder = builder.headers_order(go_order);
         } else {
-            let gaxios_order = &[
+            let gaxios_order = vec![
                 header::ACCEPT,
                 header::ACCEPT_ENCODING,
                 header::AUTHORIZATION,
@@ -184,7 +184,7 @@ impl UpstreamClient {
             .proxy(proxy_config.proxy);
 
         if is_go_ls {
-            let go_order = &[
+            let go_order = vec![
                 header::HOST,
                 header::USER_AGENT,
                 header::CONTENT_LENGTH,
@@ -194,7 +194,7 @@ impl UpstreamClient {
             ];
             builder = builder.headers_order(go_order);
         } else {
-            let gaxios_order = &[
+            let gaxios_order = vec![
                 header::ACCEPT,
                 header::ACCEPT_ENCODING,
                 header::AUTHORIZATION,

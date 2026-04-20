@@ -107,7 +107,7 @@ impl ProxyPoolManager {
             .timeout(Duration::from_secs(timeout_secs));
 
         if is_go_ls {
-            let go_order = &[
+            let go_order = vec![
                 rquest::header::HOST,
                 rquest::header::USER_AGENT,
                 rquest::header::CONTENT_LENGTH,
@@ -117,7 +117,7 @@ impl ProxyPoolManager {
             ];
             builder = builder.headers_order(go_order);
         } else {
-            let gaxios_order = &[
+            let gaxios_order = vec![
                 rquest::header::ACCEPT,
                 rquest::header::ACCEPT_ENCODING,
                 rquest::header::AUTHORIZATION,
@@ -224,7 +224,7 @@ impl ProxyPoolManager {
         }
 
         if is_go_ls {
-            let go_order = &[
+            let go_order = vec![
                 rquest::header::HOST,
                 rquest::header::USER_AGENT,
                 rquest::header::CONTENT_LENGTH,
@@ -234,7 +234,7 @@ impl ProxyPoolManager {
             ];
             builder = builder.headers_order(go_order);
         } else {
-            let gaxios_order = &[
+            let gaxios_order = vec![
                 rquest::header::ACCEPT,
                 rquest::header::ACCEPT_ENCODING,
                 rquest::header::AUTHORIZATION,
