@@ -4,8 +4,10 @@ use tokio::process::Command as TokioCommand;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
+#[allow(dead_code)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+#[allow(dead_code)]
 pub trait CommandExtWrapper {
     /// 在 Windows 下为命令添加 CREATE_NO_WINDOW 标志，隐藏黑框
     fn creation_flags_windows(&mut self) -> &mut Self;
