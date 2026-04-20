@@ -235,15 +235,24 @@ async fn handle_tunneled_request(
         path.contains("generateContent") || path.contains("CodeAssist") || path.contains("chat");
     let mut modified_body = false;
     if is_ai_or_assist_payload && !body.is_empty() {
-        if let Ok(mut stringified_body) = String::from_utf8(body.clone()) {
-            if stringified_body.contains("file:///") {
-                let re_pattern = r#"(?i)file:///(?:[A-Za-z](?:%3A|:)[/\\]|/)(?:[^/&?#\s"'\\]+[/\\])+([^/&?#\s"'\\]+)"#;
-                let re = regex::Regex::new(re_pattern).unwrap();
-                stringified_body = re
-                    .replace_all(&stringified_body, "file:///workspace/$1")
-                    .into_owned();
-                body = stringified_body.into_bytes();
+        let is_json = headers.iter().any(|h| h.to_lowercase().contains("application/json"));
+        if is_json {
+            if let Ok(mut stringified_body) = String::from_utf8(body.clone()) {
+                if stringified_body.contains("file:///") {
+                    let re_pattern = r#"(?i)file:///(?:[A-Za-z](?:%3A|:)[/\\]|/)(?:[^/&?#\s"'\\]+[/\\])+([^/&?#\s"'\\]+)"#;
+                    let re = regex::Regex::new(re_pattern).unwrap();
+                    stringified_body = re
+                        .replace_all(&stringified_body, "file:///workspace/$1")
+                        .into_owned();
+                    body = stringified_body.into_bytes();
+                    modified_body = true;
+                }
+            }
+        } else {
+            if let Some(masked_body) = crate::utils::protobuf::mask_protobuf_paths(&body) {
+                body = masked_body;
                 modified_body = true;
+                tracing::debug!("[MITM] Schema-aware Protobuf workspace path masking applied");
             }
         }
     }

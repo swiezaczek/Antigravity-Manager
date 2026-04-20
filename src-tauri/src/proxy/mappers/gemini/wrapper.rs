@@ -593,11 +593,7 @@ pub fn wrap_request(
     } else {
         "ANTIGRAVITY"
     };
-    let official_user_agent = if is_enterprise {
-        "jetski"
-    } else {
-        "antigravity"
-    };
+    let official_user_agent = crate::constants::get_default_user_agent();
 
     // [NEW] 如果是 loadCodeAssist 请求，注入 metadata 字段对齐官方
     if final_model_name == "loadCodeAssist" || inner_request.get("metadata").is_some() {

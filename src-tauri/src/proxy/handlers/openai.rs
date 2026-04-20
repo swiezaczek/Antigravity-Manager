@@ -1935,7 +1935,7 @@ pub async fn handle_images_generations_internal(
                     "project": project_id,
                     "requestId": format!("agent-{}", uuid::Uuid::new_v4()),
                     "model": model_to_use,
-                    "userAgent": "antigravity",
+                    "userAgent": crate::constants::get_default_user_agent(),
                     "requestType": "image_gen",
                     "request": {
                         "contents": [{
@@ -2335,7 +2335,7 @@ pub async fn handle_images_edits(
                     "project": project_id,
                     "requestId": format!("img-edit-{}", uuid::Uuid::new_v4()),
                     "model": model,
-                    "userAgent": "antigravity",
+                    "userAgent": crate::constants::get_default_user_agent(),
                     "requestType": "image_gen",
                     "request": {
                         "contents": [{

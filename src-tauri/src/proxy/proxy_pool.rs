@@ -207,31 +207,45 @@ impl ProxyPoolManager {
         &self,
         account_id: &str,
     ) -> Result<Option<PoolProxyConfig>, String> {
-        let config = self.config.read().await;
+        let (res, need_bind) = {
+            let config = self.config.read().await;
 
-        if !config.enabled || config.proxies.is_empty() {
-            return Ok(None);
+            if !config.enabled || config.proxies.is_empty() {
+                return Ok(None);
+            }
+
+            // 1. 优先使用账号绑定 (专属 IP)
+            if let Some(proxy) = self.get_bound_proxy(account_id, &config).await? {
+                tracing::info!(
+                    "[Proxy] Route: Account {} -> Proxy {} (Bound)",
+                    account_id,
+                    proxy.entry_id
+                );
+                return Ok(Some(proxy));
+            }
+
+            // 2. 否则从池中策略选择 (公用池)
+            let res = self.select_proxy_from_pool(&config).await?;
+            if let Some(ref p) = res {
+                tracing::info!(
+                    "[Proxy] Route: Account {} -> Proxy {} (Pool - Auto Binding)",
+                    account_id,
+                    p.entry_id
+                );
+                (Some(p.clone()), Some(p.entry_id.clone()))
+            } else {
+                (None, None)
+            }
+        };
+
+        if let Some(proxy_id) = need_bind {
+            if let Err(e) = self.bind_account_to_proxy(account_id.to_string(), proxy_id.clone()).await {
+                tracing::warn!("[ProxyPool] Failed to auto-bind account {} to proxy: {}", account_id, e);
+            } else {
+                tracing::info!("[ProxyPool] Auto-bound account {} to new proxy {}", account_id, proxy_id);
+            }
         }
 
-        // 1. 优先使用账号绑定 (专属 IP)
-        if let Some(proxy) = self.get_bound_proxy(account_id, &config).await? {
-            tracing::info!(
-                "[Proxy] Route: Account {} -> Proxy {} (Bound)",
-                account_id,
-                proxy.entry_id
-            );
-            return Ok(Some(proxy));
-        }
-
-        // 2. 否则从池中策略选择 (公用池)
-        let res = self.select_proxy_from_pool(&config).await?;
-        if let Some(ref p) = res {
-            tracing::info!(
-                "[Proxy] Route: Account {} -> Proxy {} (Pool)",
-                account_id,
-                p.entry_id
-            );
-        }
         Ok(res)
     }
 

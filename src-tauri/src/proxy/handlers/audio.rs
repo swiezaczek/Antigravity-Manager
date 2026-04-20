@@ -110,7 +110,7 @@ pub async fn handle_audio_transcription(
         "requestId": format!("audio-{}", Uuid::new_v4()),
         "request": gemini_request,
         "model": model,
-        "userAgent": "antigravity",
+        "userAgent": crate::constants::get_default_user_agent(),
         "requestType": "text"
     });
 

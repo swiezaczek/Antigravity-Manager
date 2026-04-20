@@ -360,3 +360,121 @@ pub fn create_string_value_payload(value: &str) -> Vec<u8> {
 pub fn create_minimal_user_status_payload(email: &str) -> Vec<u8> {
     [encode_string_field(3, email), encode_string_field(7, email)].concat()
 }
+
+static WORKSPACE_PATH_REGEX: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r#"(?i)file:///(?:[A-Za-z](?:%3A|:)[/\\]|/)(?:[^/&?#\s"'\\]+[/\\])+([^/&?#\s"'\\]+)"#)
+        .unwrap()
+});
+
+/// Schema-aware (wire-format aware) generic Protobuf string masking.
+/// Recursively iterates fields, attempting to find length-delimited (wire_type == 2) fields that
+/// contain the specified string or match a regex pattern. Re-encodes the protobuf with the new length
+/// so no corruption occurs.
+pub fn mask_protobuf_paths(data: &[u8]) -> Option<Vec<u8>> {
+    let (encoded, modified) = mask_protobuf_paths_recursive(data, &WORKSPACE_PATH_REGEX);
+    if modified {
+        Some(encoded)
+    } else {
+        None
+    }
+}
+
+fn mask_protobuf_paths_recursive(data: &[u8], re: &regex::Regex) -> (Vec<u8>, bool) {
+    let mut result = Vec::new();
+    let mut offset = 0;
+    let mut modified_any = false;
+
+    while offset < data.len() {
+        let start_offset = offset;
+        let (tag, new_offset) = match read_varint(data, offset) {
+            Ok(v) => v,
+            Err(_) => return (data.to_vec(), false), // not valid protobuf at this level
+        };
+
+        let wire_type = (tag & 7) as u8;
+        // let field_num = (tag >> 3) as u32;
+
+        match wire_type {
+            0 => {
+                let (_, next) = match read_varint(data, new_offset) {
+                    Ok(v) => v,
+                    Err(_) => return (data.to_vec(), false),
+                };
+                result.extend_from_slice(&data[start_offset..next]);
+                offset = next;
+            }
+            1 => {
+                if new_offset + 8 > data.len() {
+                    return (data.to_vec(), false);
+                }
+                result.extend_from_slice(&data[start_offset..new_offset + 8]);
+                offset = new_offset + 8;
+            }
+            5 => {
+                if new_offset + 4 > data.len() {
+                    return (data.to_vec(), false);
+                }
+                result.extend_from_slice(&data[start_offset..new_offset + 4]);
+                offset = new_offset + 4;
+            }
+            2 => {
+                let (length, content_offset) = match read_varint(data, new_offset) {
+                    Ok(v) => v,
+                    Err(_) => return (data.to_vec(), false),
+                };
+                let end_offset = content_offset + length as usize;
+                if end_offset > data.len() {
+                    return (data.to_vec(), false);
+                }
+
+                let payload = &data[content_offset..end_offset];
+                let mut string_modified = false;
+                let mut new_payload = Vec::new();
+
+                // Try treating payload as a string
+                if let Ok(s) = std::str::from_utf8(payload) {
+                    if s.contains("file:///") {
+                        let replaced = re.replace_all(s, "file:///workspace/$1");
+                        if s != replaced {
+                            new_payload = replaced.into_owned().into_bytes();
+                            string_modified = true;
+                        }
+                    }
+                }
+
+                if string_modified {
+                    let tag_varint = encode_varint(tag);
+                    let len_varint = encode_varint(new_payload.len() as u64);
+                    result.extend(tag_varint);
+                    result.extend(len_varint);
+                    result.extend(new_payload);
+                    modified_any = true;
+                } else {
+                    // Try recursive parsing as nested Protobuf
+                    let (nested_payload, nested_modified) = if length > 0 {
+                        mask_protobuf_paths_recursive(payload, re)
+                    } else {
+                        (payload.to_vec(), false)
+                    };
+
+                    if nested_modified {
+                        let tag_varint = encode_varint(tag);
+                        let len_varint = encode_varint(nested_payload.len() as u64);
+                        result.extend(tag_varint);
+                        result.extend(len_varint);
+                        result.extend(nested_payload);
+                        modified_any = true;
+                    } else {
+                        result.extend_from_slice(&data[start_offset..end_offset]);
+                    }
+                }
+                offset = end_offset;
+            }
+            _ => {
+                return (data.to_vec(), false);
+            }
+        }
+    }
+
+    (result, modified_any)
+}

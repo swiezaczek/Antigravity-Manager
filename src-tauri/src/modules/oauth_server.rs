@@ -392,12 +392,83 @@ pub async fn start_oauth_flow(
     // Ensure URL + listener are ready (this way if the user authorizes first, it won't get stuck)
     let auth_url = ensure_oauth_flow_prepared(app_handle.clone(), oauth_client_key).await?;
 
-    if let Some(h) = app_handle {
-        // Open default browser
-        use tauri_plugin_opener::OpenerExt;
-        h.opener()
-            .open_url(&auth_url, None::<String>)
-            .map_err(|e| format!("failed_to_open_browser: {}", e))?;
+    let mut spawned = false;
+    if let Some(ref h) = app_handle {
+        let state_id = match get_oauth_flow_state().lock() {
+            Ok(lock) => {
+                if let Some(s) = lock.as_ref() {
+                    s.state.clone()
+                } else {
+                    "fallback".to_string()
+                }
+            }
+            Err(_) => "fallback".to_string(),
+        };
+
+        if let Some(local_data) = dirs::data_local_dir() {
+            let app_dir = local_data
+                .join("Antigravity-Manager")
+                .join("oauth_jars")
+                .join(&state_id);
+
+            // [CRITICAL FIX] Jeśli Chromium nie znajdzie fizycznie istniejącego folderu nadrzędnego dla `--user-data-dir`,
+            // zignoruje flagę profilu i po cichu odpali nową kartę w aktualnie otwartym oknie domyślnym ze starymi kontami!
+            std::fs::create_dir_all(&app_dir).ok();
+
+            let path_arg = format!("--user-data-dir={}", app_dir.to_string_lossy());
+
+            #[cfg(target_os = "windows")]
+            let browsers = vec![
+                "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+                "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+                "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+                "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+                "msedge.exe",
+                "chrome.exe",
+            ];
+
+            #[cfg(target_os = "macos")]
+            let browsers = vec![
+                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+            ];
+
+            #[cfg(target_os = "linux")]
+            let browsers = vec!["google-chrome", "microsoft-edge", "chromium-browser"];
+
+            for browser in browsers {
+                if let Ok(_child) = std::process::Command::new(browser)
+                    .arg(&path_arg)
+                    .arg("--no-first-run")
+                    .arg("--incognito") // [OPSEC] Belt+suspenders: no persistent state even within ephemeral profile
+                    .arg("--disable-extensions") // [OPSEC] Prevent extensions from leaking identity
+                    .arg("--disable-sync") // [OPSEC] Prevent Chrome Sync from linking accounts
+                    .arg("--disable-background-networking") // [OPSEC] Prevent prefetch/telemetry during login
+                    .arg("--new-window")
+                    .arg(&auth_url)
+                    .spawn()
+                {
+                    crate::modules::logger::log_info(&format!(
+                        "[Zero-Emission] Spawned isolated OAuth browser: {}",
+                        browser
+                    ));
+                    spawned = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    if !spawned {
+        crate::modules::logger::log_warn(
+            "[Zero-Emission] Could not spawn isolated browser. Falling back to default browser.",
+        );
+        if let Some(h) = app_handle {
+            use tauri_plugin_opener::OpenerExt;
+            h.opener()
+                .open_url(&auth_url, None::<String>)
+                .map_err(|e| format!("failed_to_open_browser: {}", e))?;
+        }
     }
 
     // Take code_rx to wait for it
@@ -426,6 +497,31 @@ pub async fn start_oauth_flow(
     // Clean up flow state (release cancel_tx, etc.)
     if let Ok(mut lock) = get_oauth_flow_state().lock() {
         *lock = None;
+    }
+
+    // [HOUSEKEEPING] Prune old oauth_jars profiles to prevent disk bloat.
+    if let Some(local_data) = dirs::data_local_dir() {
+        let jars_dir = local_data.join("Antigravity-Manager").join("oauth_jars");
+        if jars_dir.exists() {
+            tokio::task::spawn_blocking(move || {
+                if let Ok(entries) = std::fs::read_dir(&jars_dir) {
+                    let mut dirs: Vec<_> = entries
+                        .filter_map(|e| e.ok())
+                        .filter(|e| e.path().is_dir())
+                        .collect();
+                    // Sort by name descending (names are timestamps, so newest first)
+                    dirs.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+                    // Remove all but the most recent one
+                    for old_dir in dirs.into_iter().skip(1) {
+                        if let Err(e) = std::fs::remove_dir_all(old_dir.path()) {
+                            tracing::warn!("Failed to clean old oauth_jar {:?}: {}", old_dir.path(), e);
+                        } else {
+                            tracing::info!("Cleaned old oauth_jar: {:?}", old_dir.path());
+                        }
+                    }
+                }
+            });
+        }
     }
 
     oauth::exchange_code_with_client(&code, &redirect_uri, Some(&client_key)).await

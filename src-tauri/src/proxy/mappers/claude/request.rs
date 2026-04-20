@@ -667,7 +667,7 @@ pub fn transform_claude_request_in(
         "requestId": request_id,
         "request": inner_request,
         "model": config.final_model,
-        "userAgent": "antigravity",
+        "userAgent": crate::constants::get_default_user_agent(),
         // [CHANGED v4.1.24] Use "agent" for all non-image requests
         "requestType": if config.request_type == "image_gen" { "image_gen" } else { "agent" },
     });

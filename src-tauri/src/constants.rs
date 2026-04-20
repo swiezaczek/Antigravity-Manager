@@ -210,7 +210,7 @@ pub fn get_default_user_agent() -> String {
     };
     format!(
         "antigravity/{} {} google-api-nodejs-client/10.3.0",
-        env!("CARGO_PKG_VERSION"),
+        "1.22.2",
         platform_info
     )
 }
