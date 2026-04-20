@@ -113,7 +113,12 @@ async fn handle_client(
             Ok(true) => continue,  // keep-alive: handle next request
             Ok(false) => break,    // connection closed cleanly
             Err(e) => {
-                tracing::debug!("[MITM] Tunnel request error for {}: {}", host, e);
+                let err_str = e.to_string();
+                if err_str.contains("close_notify") || err_str.contains("UnexpectedEof") || err_str.contains("connection closed before message completed") {
+                    tracing::debug!("[MITM] Keep-alive closed quietly by {}", host);
+                } else {
+                    tracing::debug!("[MITM] Tunnel request error for {}: {}", host, e);
+                }
                 break;
             }
         }
@@ -496,7 +501,13 @@ async fn forward_to_upstream_with_proxy(
     let allow_http2 = path.contains("/api/client") || path.contains("/log") || host.contains("play.googleapis.com");
     let client = proxy_pool.get_effective_standard_client(account_id, 30, allow_http2).await;
     
-    let url = format!("https://{}{}", host, path);
+    // [FIX] Rewrite spoofed local hosts back to canonical Google hosts for upstream resolution
+    let real_host = match host {
+        "antigravity-unleash.goog" => "cloudcode-unleash.goog",
+        _ => host,
+    };
+    
+    let url = format!("https://{}{}", real_host, path);
     // Convert method string to HTTP Method
     let reqwest_method = reqwest::Method::from_bytes(method.as_bytes())?;
     
@@ -504,7 +515,11 @@ async fn forward_to_upstream_with_proxy(
     let mut req_builder = client.request(reqwest_method, &url);
     for h in headers {
         if let Some((k, v)) = h.split_once(':') {
-            req_builder = req_builder.header(k.trim(), v.trim());
+            let mut v_str = v.trim();
+            if k.to_lowercase() == "host" && v_str == "antigravity-unleash.goog" {
+                v_str = "cloudcode-unleash.goog";
+            }
+            req_builder = req_builder.header(k.trim(), v_str);
         }
     }
     // [OPSEC Phase 11] Ghost Cache Load Phase
