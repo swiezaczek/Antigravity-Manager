@@ -531,7 +531,7 @@ impl ProxyPoolManager {
         // 尝试构建 Client，如果失败直接视为不健康
         let proxy_res = self.build_proxy_config(entry);
         if let Err(e) = proxy_res { 
-            tracing::error!("Proxy {} build config failed: {}", entry.url, e);
+            tracing::error!("Proxy {} build config failed: {}", entry.name, crate::proxy::upstream::client::sanitize_error_for_log(&e));
             return (false, None); 
         }
         let proxy_cfg = proxy_res.unwrap();
@@ -546,7 +546,7 @@ impl ProxyPoolManager {
         let client = match client_result {
             Ok(c) => c,
             Err(e) => {
-                tracing::error!("Proxy {} build client failed: {}", entry.url, e);
+                tracing::error!("Proxy {} build client failed: {}", entry.name, crate::proxy::upstream::client::sanitize_error_for_log(&e.to_string()));
                 return (false, None);
             },
         };
@@ -563,7 +563,7 @@ impl ProxyPoolManager {
                 }
             },
             Err(e) => {
-                tracing::warn!("Proxy {} health check request failed: {}", entry.url, e);
+                tracing::warn!("Proxy {} health check request failed: {}", entry.name, crate::proxy::upstream::client::sanitize_error_for_log(&e.to_string()));
                 (false, None)
             },
         }

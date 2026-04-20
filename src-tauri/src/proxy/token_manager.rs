@@ -1385,7 +1385,7 @@ impl TokenManager {
                                             .await;
                                     }
                                     Err(e) => {
-                                        tracing::warn!("Preferred account token refresh failed: {}", e);
+                                        tracing::warn!("Preferred account token refresh failed: {}", crate::proxy::upstream::client::sanitize_error_for_log(&e));
                                         // 继续使用旧 token，让后续逻辑处理失败
                                     }
                                 }
@@ -1736,11 +1736,11 @@ impl TokenManager {
                                 let _ = self.save_refreshed_token(&token.account_id, &token_response).await;
                             }
                             Err(e) => {
-                                tracing::error!("Token 刷新失败 ({}): {}，尝试下一个账号", token.email, e);
+                                tracing::error!("Token 刷新失败 ({}): {}，尝试下一个账号", token.email, crate::proxy::upstream::client::sanitize_error_for_log(&e));
                                 if e.contains("\"invalid_grant\"") || e.contains("invalid_grant") {
-                                    self.disable_account(&token.account_id, &format!("invalid_grant: {}", e)).await;
+                                    self.disable_account(&token.account_id, &format!("invalid_grant: {}", crate::proxy::upstream::client::sanitize_error_for_log(&e))).await;
                                 }
-                                last_error = Some(format!("Token refresh failed: {}", e));
+                                last_error = Some(format!("Token refresh failed: {}", crate::proxy::upstream::client::sanitize_error_for_log(&e)));
                                 attempted.insert(token.account_id.clone());
                                 if quota_group != "image_gen" && matches!(&last_used_account_id, Some((id, _)) if id == &token.account_id) {
                                     need_update_last_used = Some((String::new(), std::time::Instant::now()));
@@ -2038,7 +2038,7 @@ impl TokenManager {
             }
             Err(e) => Err(format!(
                 "[Warmup] Token refresh failed for {}: {}",
-                email, e
+                email, crate::proxy::upstream::client::sanitize_error_for_log(&e)
             )),
         }
     }

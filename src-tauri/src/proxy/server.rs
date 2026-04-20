@@ -1134,6 +1134,15 @@ async fn admin_start_oauth_login(
                 Json(ErrorResponse { error: e }),
             )
         })?;
+
+    // [FIX #1166] Synchronize TokenManager after adding account via OAuth
+    if let Err(e) = state.token_manager.load_accounts().await {
+        logger::log_error(&format!(
+            "[API] Failed to reload accounts after OAuth start: {}",
+            e
+        ));
+    }
+
     let current_id = state.account_service.get_current_id().map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1156,6 +1165,15 @@ async fn admin_complete_oauth_login(
                 Json(ErrorResponse { error: e }),
             )
         })?;
+
+    // [FIX #1166] Synchronize TokenManager after adding account via OAuth complete
+    if let Err(e) = state.token_manager.load_accounts().await {
+        logger::log_error(&format!(
+            "[API] Failed to reload accounts after OAuth complete: {}",
+            e
+        ));
+    }
+
     let current_id = state.account_service.get_current_id().map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,

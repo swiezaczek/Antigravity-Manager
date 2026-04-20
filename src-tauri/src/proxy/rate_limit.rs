@@ -195,7 +195,7 @@ impl RateLimitTracker {
         
         // 1. 解析限流原因类型
         let reason = if status == 429 {
-            tracing::warn!("Google 429 Error Body: {}", body);
+            tracing::warn!("Google 429 Error Body: {}", crate::proxy::upstream::client::sanitize_error_for_log(body));
             self.parse_rate_limit_reason(body)
         } else if status == 404 {
             tracing::warn!("Google 404: model unavailable on this account, short lockout before rotation");

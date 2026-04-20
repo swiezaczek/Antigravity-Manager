@@ -407,7 +407,7 @@ impl UpstreamClient {
                     });
                 }
                 Err(e) => {
-                    let msg = format!("HTTP request failed at {}: {}", base_url, e);
+                    let msg = format!("HTTP request failed at {}: {}", base_url, sanitize_error_for_log(&e.to_string()));
                     tracing::debug!("{}", msg);
                     // [NEW] 记录网络错误的降级尝试
                     fallback_attempts.push(FallbackAttemptLog {
