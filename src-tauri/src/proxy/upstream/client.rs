@@ -115,18 +115,31 @@ impl UpstreamClient {
     fn build_client_internal(
         proxy_config: Option<crate::proxy::config::UpstreamProxyConfig>,
     ) -> Result<Client, rquest::Error> {
+        // [OPSEC Phase Z] Strict Node.JS Gaxios Header canonical ordering
+        let gaxios_order = &[
+            header::ACCEPT,
+            header::ACCEPT_ENCODING,
+            header::AUTHORIZATION,
+            header::CONTENT_TYPE,
+            header::USER_AGENT,
+            header::HeaderName::from_static("x-goog-api-client"),
+            header::CONTENT_LENGTH,
+            header::CONNECTION,
+            header::HOST,
+        ];
+
         let mut builder = Client::builder()
             // [OPSEC] NO Chrome123 emulation! The original Antigravity plugin is Node.js,
             // not Chrome. Using Chrome TLS fingerprint with Node.js User-Agent headers
             // creates an instantly detectable contradiction for Google WAF.
             // Pure rquest (BoringSSL) fingerprint is closer to Node.js (OpenSSL) than Chrome.
             .http1_only() // [OPSEC] Force HTTP/1.1 to match Node.js gaxios (Connection: keep-alive)
+            .headers_order(gaxios_order) // [OPSEC] Enforce Node.js header ordering sequence
             // Connection settings
             .connect_timeout(Duration::from_secs(20))
             .pool_max_idle_per_host(20) // 每主机最多 20 个空闲连接 (对齐官方指纹)
             .pool_idle_timeout(Duration::from_secs(90)) // 空闲连接保持 90 秒
             .tcp_keepalive(Duration::from_secs(60)) // TCP 保活探测 60 秒
-            // 强制开启 HTTP/2 协议，并支持在 SOCKS/HTTPS 代理下通过 ALPN 强制降级/协商
             .timeout(Duration::from_secs(600));
 
         builder = Self::apply_default_user_agent(builder);
@@ -149,10 +162,23 @@ impl UpstreamClient {
         &self,
         proxy_config: crate::proxy::proxy_pool::PoolProxyConfig,
     ) -> Result<Client, rquest::Error> {
+        let gaxios_order = &[
+            header::ACCEPT,
+            header::ACCEPT_ENCODING,
+            header::AUTHORIZATION,
+            header::CONTENT_TYPE,
+            header::USER_AGENT,
+            header::HeaderName::from_static("x-goog-api-client"),
+            header::CONTENT_LENGTH,
+            header::CONNECTION,
+            header::HOST,
+        ];
+
         // Reuse base settings similar to default client but with specific proxy
         let builder = Client::builder()
             // [OPSEC] NO Chrome123 emulation — must match Node.js transport fingerprint
             .http1_only() // [OPSEC] Force HTTP/1.1 per MITM Connection: close pattern
+            .headers_order(gaxios_order) // [OPSEC] Enforce Node.js header ordering sequence
             .connect_timeout(Duration::from_secs(20))
             .pool_max_idle_per_host(20)
             .pool_idle_timeout(Duration::from_secs(90))

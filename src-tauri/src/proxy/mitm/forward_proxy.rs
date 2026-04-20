@@ -519,6 +519,10 @@ async fn forward_to_upstream_with_proxy(
             if k.to_lowercase() == "host" && v_str == "antigravity-unleash.goog" {
                 v_str = "cloudcode-unleash.goog";
             }
+            // [OPSEC Phase 11] Strip client's native caching headers to prevent cross-account ETag bleeding
+            if k.eq_ignore_ascii_case("if-none-match") || k.eq_ignore_ascii_case("if-modified-since") {
+                continue;
+            }
             req_builder = req_builder.header(k.trim(), v_str);
         }
     }
@@ -645,6 +649,10 @@ async fn forward_to_upstream_with_proxy(
                         // Format it to look like a canonical gaiaId (21 digits)
                         let fake_gaia = format!("1{:020}", sum);
                         obj.insert("gaiaId".to_string(), serde_json::json!(fake_gaia));
+                    }
+                    if obj.contains_key("picture") {
+                        // [OPSEC] Prevent IDE from downloading the real Google Account avatar from lh3.googleusercontent.com
+                        obj.insert("picture".to_string(), serde_json::json!("https://lh3.googleusercontent.com/a/default-user"));
                     }
 
                     // [OPSEC Phase 11] We NO LONGER eradicate experiment arrays here!
@@ -885,3 +893,14 @@ fn rewrite_agent_telemetry(mut headers: Vec<String>, body: Vec<u8>) -> (Vec<Stri
 
     (headers, body, None)
 }
+
+/// Zewnetrznie wywolywana funkcja z proxy_pool sluzaca do wymiecenia starych hash'ow cache
+/// ETag/Last-Modified dla danego konta. Zabezpiecza przed tzw. "Resurrected Leaks" po zmianie profilu proxy.
+pub fn clear_account_ghost_cache(account_id: &str) {
+    if let Ok(mut cache) = GHOST_CACHE.write() {
+        let prefix = format!("{}|", account_id);
+        cache.retain(|k, _| !k.starts_with(&prefix));
+        tracing::info!("[MITM] Wiped Ghost Cache traces for account: {}", account_id);
+    }
+}
+

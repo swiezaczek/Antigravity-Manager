@@ -94,9 +94,23 @@ impl ProxyPoolManager {
             return client.clone();
         }
 
+        // [OPSEC Phase Z] Strict Node.JS Gaxios Header canonical ordering
+        let gaxios_order = &[
+            rquest::header::ACCEPT,
+            rquest::header::ACCEPT_ENCODING,
+            rquest::header::AUTHORIZATION,
+            rquest::header::CONTENT_TYPE,
+            rquest::header::USER_AGENT,
+            rquest::header::HeaderName::from_static("x-goog-api-client"),
+            rquest::header::CONTENT_LENGTH,
+            rquest::header::CONNECTION,
+            rquest::header::HOST,
+        ];
+
         let mut builder = Client::builder()
             // [OPSEC] No emulation, force HTTP/1.1 to match Node.js MITM fingerprint
             .http1_only()
+            .headers_order(gaxios_order) // [OPSEC] Enforce Node.js header ordering sequence
             .timeout(Duration::from_secs(timeout_secs));
 
         if account_id.is_none() {
@@ -159,12 +173,26 @@ impl ProxyPoolManager {
             return client.clone();
         }
 
+        // [OPSEC Phase Z] Strict Node.JS Gaxios Header canonical ordering
+        let gaxios_order = &[
+            rquest::header::ACCEPT,
+            rquest::header::ACCEPT_ENCODING,
+            rquest::header::AUTHORIZATION,
+            rquest::header::CONTENT_TYPE,
+            rquest::header::USER_AGENT,
+            rquest::header::HeaderName::from_static("x-goog-api-client"),
+            rquest::header::CONTENT_LENGTH,
+            rquest::header::CONNECTION,
+            rquest::header::HOST,
+        ];
+
         let mut builder = Client::builder()
             .timeout(Duration::from_secs(timeout_secs));
             
         if !allow_http2 {
             // [OPSEC] For Node.js (gaxios) traffic, enforce HTTP/1.1
             builder = builder.http1_only();
+            builder = builder.headers_order(gaxios_order); // [OPSEC] Enforce Node.js header ordering sequence
         }
             
         if account_id.is_none() {
@@ -211,7 +239,22 @@ impl ProxyPoolManager {
 
         let new_client = builder.build().unwrap_or_else(|_| {
             let mut fb = Client::builder().timeout(Duration::from_secs(timeout_secs));
-            if !allow_http2 { fb = fb.http1_only(); }
+            if !allow_http2 { 
+                fb = fb.http1_only(); 
+                // [OPSEC Phase Z] Strict Node.JS Gaxios Header canonical ordering
+                let gaxios_order = &[
+                    rquest::header::ACCEPT,
+                    rquest::header::ACCEPT_ENCODING,
+                    rquest::header::AUTHORIZATION,
+                    rquest::header::CONTENT_TYPE,
+                    rquest::header::USER_AGENT,
+                    rquest::header::HeaderName::from_static("x-goog-api-client"),
+                    rquest::header::CONTENT_LENGTH,
+                    rquest::header::CONNECTION,
+                    rquest::header::HOST,
+                ];
+                fb = fb.headers_order(gaxios_order);
+            }
             fb.build().expect("critical: fallback standard client build failed")
         });
         if account_id.is_some() {
@@ -426,6 +469,9 @@ impl ProxyPoolManager {
         // [OPSEC] 立即清除该账号的物理 TLS 缓存池
         self.account_client_cache.retain(|k, _| !k.starts_with(&account_id));
         self.account_standard_cache.retain(|k, _| !k.starts_with(&account_id));
+
+        // [OPSEC Phase 11] Wymieć Ghost Cache zapobiegajac wyciekowi 'Resurrection Leak' (stare ETagi po zmianie konta i proxy)
+        crate::proxy::mitm::forward_proxy::clear_account_ghost_cache(&account_id);
 
         // 持久化到配置文件
         self.persist_bindings().await;
