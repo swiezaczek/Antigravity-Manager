@@ -384,13 +384,15 @@ async fn exchange_code_once(
     ];
 
     tracing::debug!(
-        "[OAuth] Sending exchange_code request with User-Agent: {}",
-        crate::constants::NATIVE_OAUTH_USER_AGENT.as_str()
+        "[OAuth] Sending exchange_code request with canonical IDE User-Agent"
     );
 
     let response = client
         .post(TOKEN_URL)
-        .header(rquest::header::USER_AGENT, crate::constants::NATIVE_OAUTH_USER_AGENT.as_str())
+        .header(rquest::header::ACCEPT, "*/*")
+        .header(rquest::header::ACCEPT_ENCODING, "gzip, deflate, br")
+        .header(rquest::header::USER_AGENT, "google-api-nodejs-client/10.3.0")
+        .header("x-goog-api-client", "gl-node/22.21.1")
         .form(&params)
         .send()
         .await
@@ -534,13 +536,15 @@ async fn refresh_access_token_once(
     }
     
     tracing::debug!(
-        "[OAuth] Sending refresh_access_token request with User-Agent: {}",
-        crate::constants::NATIVE_OAUTH_USER_AGENT.as_str()
+        "[OAuth] Sending refresh_access_token request with canonical IDE User-Agent"
     );
 
     let response = client
         .post(TOKEN_URL)
-        .header(rquest::header::USER_AGENT, crate::constants::NATIVE_OAUTH_USER_AGENT.as_str())
+        .header(rquest::header::ACCEPT, "*/*")
+        .header(rquest::header::ACCEPT_ENCODING, "gzip, deflate, br")
+        .header(rquest::header::USER_AGENT, "google-api-nodejs-client/10.3.0")
+        .header("x-goog-api-client", "gl-node/22.21.1")
         .form(&params)
         .send()
         .await
@@ -650,6 +654,10 @@ pub async fn get_user_info(access_token: &str, account_id: Option<&str>) -> Resu
     let response = client
         .get(USERINFO_URL)
         .bearer_auth(access_token)
+        .header(rquest::header::ACCEPT, "*/*")
+        .header(rquest::header::ACCEPT_ENCODING, "gzip, deflate, br")
+        .header(rquest::header::USER_AGENT, crate::constants::USER_AGENT.as_str())
+        .header("x-goog-api-client", "gl-node/22.21.1")
         .send()
         .await
         .map_err(|e| format!("User info request failed: {}", e))?;
