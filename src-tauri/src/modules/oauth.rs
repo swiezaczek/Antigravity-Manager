@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 // Google OAuth configuration
-const CLIENT_ID: &str = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"; // [OPSEC] Wektor C
-const CLIENT_SECRET: &str = "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"; // [OPSEC] Wektor C
+const CLIENT_ID: &str = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com";
+const CLIENT_SECRET: &str = "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";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const USERINFO_URL: &str = "https://www.googleapis.com/oauth2/v2/userinfo";
 const TOKEN_REFRESH_SKEW_SECONDS: i64 = 900;
@@ -39,7 +39,7 @@ impl UserInfo {
                 return Some(name.clone());
             }
         }
-
+        
         // If name is empty, combine given_name and family_name
         match (&self.given_name, &self.family_name) {
             (Some(given), Some(family)) => Some(format!("{} {}", given, family)),
@@ -331,14 +331,12 @@ pub fn get_auth_url_with_client(
 ) -> Result<(String, String), String> {
     let client = select_auth_client(client_key)?;
 
-    // [OPSEC v4.1.32] Scopes synced with original client dump (6 scopes, exact order)
     let scopes = vec![
         "https://www.googleapis.com/auth/cloud-platform",
-        "https://www.googleapis.com/auth/userinfo.profile",
-        "https://www.googleapis.com/auth/experimentsandconfigs",
         "https://www.googleapis.com/auth/userinfo.email",
-        "openid",
+        "https://www.googleapis.com/auth/userinfo.profile",
         "https://www.googleapis.com/auth/cclog",
+        "https://www.googleapis.com/auth/experimentsandconfigs",
     ]
     .join(" ");
 
@@ -349,9 +347,10 @@ pub fn get_auth_url_with_client(
         ("scope", &scopes),
         ("access_type", "offline"),
         ("prompt", "consent"),
+        ("include_granted_scopes", "true"),
         ("state", state),
     ];
-
+    
     let url = url::Url::parse_with_params(AUTH_URL, &params)
         .map_err(|e| format!("Invalid Auth URL: {}", e))?;
     Ok((url.to_string(), client.key))
@@ -369,20 +368,13 @@ async fn exchange_code_once(
     redirect_uri: &str,
     client_cfg: &OAuthClientConfig,
 ) -> Result<TokenResponse, (Option<reqwest::StatusCode>, String)> {
-    // [OPSEC V15] Unified TLS stack: use rquest (BoringSSL) for consistent JA3 fingerprint
-    // across all Google-facing traffic. Previously used reqwest which has a different TLS fingerprint.
-    let client = rquest::Client::builder()
-        .http1_only() // [OPSEC Phase 13] Force HTTP/1.1 for auth callbacks to strictly simulate the internal gaxios Node.js mechanism
-        .timeout(std::time::Duration::from_secs(60))
-        .pool_max_idle_per_host(0) // Single-use connection
-        .build()
-        .unwrap_or_else(|_| {
-            rquest::Client::builder()
-                .http1_only()
-                .build()
-                .expect("critical: oauth client build failed")
-        });
-
+    // [PHASE 2] 对于登录行为，尚未有 account_id，使用全局池阶梯逻辑
+    let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
+        pool.get_effective_standard_client(None, 60).await
+    } else {
+        crate::utils::http::get_long_standard_client()
+    };
+    
     let params = [
         ("client_id", client_cfg.client_id.as_str()),
         ("client_secret", client_cfg.client_secret.as_str()),
@@ -392,24 +384,14 @@ async fn exchange_code_once(
     ];
 
     tracing::debug!(
-        "[OAuth] Sending exchange_code request with single-use TCP connection (Connection: close)"
+        "[OAuth] Sending exchange_code request with User-Agent: {}",
+        crate::constants::NATIVE_OAUTH_USER_AGENT.as_str()
     );
-
-    let mut headers = crate::utils::http::google_oauth_headers();
-    headers.insert(
-        rquest::header::CONNECTION,
-        rquest::header::HeaderValue::from_static("close"),
-    );
-
-    // [OPSEC V6] Pre-compute URL-encoded body (Serializer is not Send, must not span .await)
-    let encoded_body = url::form_urlencoded::Serializer::new(String::new())
-        .extend_pairs(params.iter())
-        .finish();
 
     let response = client
         .post(TOKEN_URL)
-        .headers(headers)
-        .body(encoded_body)
+        .header(rquest::header::USER_AGENT, crate::constants::NATIVE_OAUTH_USER_AGENT.as_str())
+        .form(&params)
         .send()
         .await
         .map_err(|e| {
@@ -432,7 +414,7 @@ async fn exchange_code_once(
             .await
             .map_err(|e| (None, format!("Token parsing failed: {}", e)))?;
         token_res.oauth_client_key = Some(client_cfg.key.clone());
-
+        
         // Add detailed logs
         crate::modules::logger::log_info(&format!(
             "Token exchange successful via [{}]! access_token: {}..., refresh_token: {}",
@@ -444,7 +426,7 @@ async fn exchange_code_once(
                 "✗ Missing"
             }
         ));
-
+        
         // Log warning if refresh_token is missing
         if token_res.refresh_token.is_none() {
             crate::modules::logger::log_warn(
@@ -454,7 +436,7 @@ async fn exchange_code_once(
                  3. OAuth parameter configuration issue",
             );
         }
-
+        
         Ok(token_res)
     } else {
         let status = response.status();
@@ -532,12 +514,11 @@ async fn refresh_access_token_once(
 ) -> Result<TokenResponse, (Option<reqwest::StatusCode>, String)> {
     // [PHASE 2] 根据 account_id 使用对应的代理
     let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
-        pool.get_effective_standard_client(account_id, 60, false, false)
-            .await
+        pool.get_effective_standard_client(account_id, 60).await
     } else {
         crate::utils::http::get_long_standard_client()
     };
-
+    
     let params = [
         ("client_id", client_cfg.client_id.as_str()),
         ("client_secret", client_cfg.client_secret.as_str()),
@@ -551,21 +532,16 @@ async fn refresh_access_token_once(
     } else {
         crate::modules::logger::log_info("Refreshing Token for generic request (no account_id)...");
     }
-
+    
     tracing::debug!(
         "[OAuth] Sending refresh_access_token request with User-Agent: {}",
         crate::constants::NATIVE_OAUTH_USER_AGENT.as_str()
     );
 
-    // [OPSEC V6] Pre-compute URL-encoded body (Serializer is not Send, must not span .await)
-    let encoded_body = url::form_urlencoded::Serializer::new(String::new())
-        .extend_pairs(params.iter())
-        .finish();
-
     let response = client
         .post(TOKEN_URL)
-        .headers(crate::utils::http::google_oauth_headers())
-        .body(encoded_body)
+        .header(rquest::header::USER_AGENT, crate::constants::NATIVE_OAUTH_USER_AGENT.as_str())
+        .form(&params)
         .send()
         .await
         .map_err(|e| {
@@ -588,7 +564,7 @@ async fn refresh_access_token_once(
             .await
             .map_err(|e| (None, format!("Refresh data parsing failed: {}", e)))?;
         token_data.oauth_client_key = Some(client_cfg.key.clone());
-
+        
         crate::modules::logger::log_info(&format!(
             "Token refreshed successfully via [{}]! Expires in: {} seconds",
             client_cfg.key, token_data.expires_in
@@ -645,8 +621,8 @@ pub async fn refresh_access_token_with_client(
                     "Refresh failed for client [{}]: {}",
                     client_cfg.key, err_msg
                 ));
-            }
-        }
+    }
+}
     }
 
     Err(format!(
@@ -663,73 +639,23 @@ pub async fn refresh_access_token(
     refresh_access_token_with_client(refresh_token, account_id, None).await
 }
 
-/// Revoke the given token (access or refresh) from Google infrastructure.
-/// Helps prevent "zombie sessions" when deleting an account.
-pub async fn revoke_token(token: &str) -> Result<(), String> {
-    // [OPSEC] We MUST NOT use a pooled generic client here!
-    // If a user deletes 5 accounts, sending 5 revoke requests sequentially over
-    // the same underlying Keep-Alive TCP/TLS connection allows Google to correlate
-    // all revoked tokens back to a single actor.
-    // Instead, we build an isolated non-pooled client just for this fire-and-forget.
-    let isolated_client = rquest::Client::builder()
-        .http1_only()
-        .timeout(std::time::Duration::from_secs(15))
-        .pool_max_idle_per_host(0) // Forces a new TLS connection and immediately closes it
-        .build()
-        .unwrap_or_else(|_| crate::utils::http::get_standard_client());
-
-    let params = [("token", token)];
-
-    // [OPSEC V6] Pre-compute URL-encoded body (Serializer is not Send)
-    let revoke_body = url::form_urlencoded::Serializer::new(String::new())
-        .extend_pairs(params.iter())
-        .finish();
-
-    let response = isolated_client
-        .post("https://oauth2.googleapis.com/revoke")
-        .headers(crate::utils::http::google_oauth_headers())
-        .body(revoke_body)
-        .send()
-        .await
-        .map_err(|e| format!("Token revoke request failed: {}", e))?;
-
-    if response.status().is_success() {
-        crate::modules::logger::log_info("Successfully revoked token during account removal");
-        Ok(())
-    } else {
-        let status = response.status();
-        let error_text = response.text().await.unwrap_or_default();
-        crate::modules::logger::log_warn(&format!(
-            "Token revoke returned {}: {}",
-            status, error_text
-        ));
-        // Return Ok anyway so account deletion proceeds even if token was already revoked/expired
-        Ok(())
-    }
-}
-
 /// Get user info
-pub async fn get_user_info(
-    access_token: &str,
-    account_id: Option<&str>,
-) -> Result<UserInfo, String> {
+pub async fn get_user_info(access_token: &str, account_id: Option<&str>) -> Result<UserInfo, String> {
     let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
-        pool.get_effective_standard_client(account_id, 15, false, false)
-            .await
+        pool.get_effective_client(account_id, 15).await
     } else {
-        crate::utils::http::get_standard_client()
+        crate::utils::http::get_client()
     };
-
+    
     let response = client
         .get(USERINFO_URL)
-        .headers(crate::utils::http::google_get_headers(access_token))
+        .bearer_auth(access_token)
         .send()
         .await
         .map_err(|e| format!("User info request failed: {}", e))?;
 
     if response.status().is_success() {
-        response
-            .json::<UserInfo>()
+        response.json::<UserInfo>()
             .await
             .map_err(|e| format!("User info parsing failed: {}", e))
     } else {
@@ -745,17 +671,14 @@ pub async fn ensure_fresh_token(
     account_id: Option<&str>,
 ) -> Result<crate::models::TokenData, String> {
     let now = chrono::Local::now().timestamp();
-
+    
     // Keep enough validity to avoid immediate post-switch refresh failure.
     if current_token.expiry_timestamp > now + TOKEN_REFRESH_SKEW_SECONDS {
         return Ok(current_token.clone());
     }
-
+    
     // Need to refresh
-    crate::modules::logger::log_info(&format!(
-        "Token expiring soon for account {:?}, refreshing...",
-        account_id
-    ));
+    crate::modules::logger::log_info(&format!("Token expiring soon for account {:?}, refreshing...", account_id));
     let response = refresh_access_token_with_client(
         &current_token.refresh_token,
         account_id,
@@ -765,7 +688,7 @@ pub async fn ensure_fresh_token(
 
     let oauth_client_key =
         normalize_refreshed_oauth_client_key(current_token, response.oauth_client_key.clone());
-
+    
     // Construct new TokenData
     Ok(crate::models::TokenData::new(
         response.access_token,
@@ -773,7 +696,7 @@ pub async fn ensure_fresh_token(
         response.expires_in,
         current_token.email.clone(),
         current_token.project_id.clone(), // Keep original project_id
-        None,                             // session_id will be generated in token_manager
+        None,  // session_id will be generated in token_manager
         current_token.is_gcp_tos,
     )
     .with_oauth_client_key(oauth_client_key))
@@ -788,9 +711,10 @@ mod tests {
         let redirect_uri = "http://localhost:8080/callback";
         let state = "test-state-123456";
         let url = get_auth_url(redirect_uri, state);
-
+        
         assert!(url.contains("state=test-state-123456"));
         assert!(url.contains("redirect_uri=http%3A%2F%2Flocalhost%3A8080%2Fcallback"));
         assert!(url.contains("response_type=code"));
     }
+
 }

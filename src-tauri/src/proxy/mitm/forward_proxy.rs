@@ -636,7 +636,7 @@ async fn forward_to_upstream_with_proxy(
 
     // [FIX] Rewrite spoofed local hosts back to canonical Google hosts for upstream resolution
     let real_host = match host {
-        "antigravity-unleash.goog" => "cloudcode-unleash.goog",
+        "antigravity-unleash.goog" => "34.54.84.110",
         _ => host,
     };
 
@@ -650,7 +650,7 @@ async fn forward_to_upstream_with_proxy(
         if let Some((k, v)) = h.split_once(':') {
             let mut v_str = v.trim();
             if k.to_lowercase() == "host" && v_str == "antigravity-unleash.goog" {
-                v_str = "cloudcode-unleash.goog";
+                v_str = "34.54.84.110";
             }
             // [OPSEC Phase 11] Strip client's native caching headers to prevent cross-account ETag bleeding
             if k.eq_ignore_ascii_case("if-none-match")

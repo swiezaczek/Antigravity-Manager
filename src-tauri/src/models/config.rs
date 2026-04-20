@@ -1,6 +1,6 @@
-use crate::modules::cloudflared::CloudflaredConfig;
-use crate::proxy::ProxyConfig;
 use serde::{Deserialize, Serialize};
+use crate::proxy::ProxyConfig;
+use crate::modules::cloudflared::CloudflaredConfig;
 
 /// Application configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -8,16 +8,16 @@ pub struct AppConfig {
     pub language: String,
     pub theme: String,
     pub auto_refresh: bool,
-    pub refresh_interval: i32, // minutes
+    pub refresh_interval: i32,  // minutes
     pub auto_sync: bool,
-    pub sync_interval: i32, // minutes
+    pub sync_interval: i32,  // minutes
     pub default_export_path: Option<String>,
     #[serde(default)]
     pub proxy: ProxyConfig,
     pub antigravity_executable: Option<String>, // [NEW] Manually specified Antigravity executable path
-    pub antigravity_args: Option<Vec<String>>,  // [NEW] Antigravity startup arguments
+    pub antigravity_args: Option<Vec<String>>, // [NEW] Antigravity startup arguments
     #[serde(default)]
-    pub auto_launch: bool, // Launch on startup
+    pub auto_launch: bool,  // Launch on startup
     #[serde(default)]
     pub scheduled_warmup: ScheduledWarmupConfig, // [NEW] Scheduled warmup configuration
     #[serde(default)]
@@ -41,14 +41,6 @@ pub struct ScheduledWarmupConfig {
     /// List of models to warmup
     #[serde(default = "default_warmup_models")]
     pub monitored_models: Vec<String>,
-
-    /// Minimal jitter delay in seconds
-    #[serde(default = "default_min_jitter")]
-    pub min_jitter_secs: u64,
-
-    /// Maximum jitter delay in seconds
-    #[serde(default = "default_max_jitter")]
-    pub max_jitter_secs: u64,
 }
 
 fn default_warmup_models() -> Vec<String> {
@@ -60,21 +52,11 @@ fn default_warmup_models() -> Vec<String> {
     ]
 }
 
-fn default_min_jitter() -> u64 {
-    30
-}
-
-fn default_max_jitter() -> u64 {
-    120
-}
-
 impl ScheduledWarmupConfig {
     pub fn new() -> Self {
         Self {
             enabled: false,
             monitored_models: default_warmup_models(),
-            min_jitter_secs: default_min_jitter(),
-            max_jitter_secs: default_max_jitter(),
         }
     }
 }
@@ -90,7 +72,7 @@ impl Default for ScheduledWarmupConfig {
 pub struct QuotaProtectionConfig {
     /// Whether quota protection is enabled
     pub enabled: bool,
-
+    
     /// Reserved quota percentage (1-99)
     pub threshold_percentage: u32,
 

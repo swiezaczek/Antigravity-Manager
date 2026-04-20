@@ -1,9 +1,5 @@
 // [NEW v4.1.24] Tools for deriving stable session identifiers
 
-// [OPSEC V13] Rotate session IDs across application restarts
-static APP_BOOT_SEED: std::sync::LazyLock<i64> =
-    std::sync::LazyLock::new(|| chrono::Utc::now().timestamp_millis());
-
 /// From account ID string to a stable negative signed integer session ID
 /// Implements FNV-1a hash which matches the official client behavior of sending
 /// a large negative integer for `sessionId`.
@@ -13,30 +9,29 @@ pub fn derive_session_id(account_id: &str) -> String {
         hash = hash.wrapping_mul(1099511628211_i64);
         hash ^= byte as i64;
     }
-    hash ^= *APP_BOOT_SEED;
     hash.to_string()
 }
 
-use std::collections::HashMap;
-use std::sync::{LazyLock, Mutex};
-
-static VSCODE_SESSIONS: LazyLock<Mutex<HashMap<String, String>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-
+/// Generate a deterministic vscode-style session ID from an account ID.
+/// This replaces the global SESSION_ID constant with per-account isolation,
+/// preventing cross-account correlation via `x-vscode-sessionid` header.
+/// Format matches the canonical UUID pattern used by VS Code/Cloud Code.
 pub fn get_or_create_vscode_session_id(account_id: &str) -> String {
-    let mut map = VSCODE_SESSIONS.lock().unwrap();
-    if let Some(session) = map.get(account_id) {
-        return session.clone();
+    // Deterministyczny UUID-like string z account_id (FNV-1a hash)
+    let mut hash: u128 = 0x6c62272e07bb0142_u128.wrapping_mul(0x100000001b3);
+    for &byte in account_id.as_bytes() {
+        hash ^= byte as u128;
+        hash = hash.wrapping_mul(0x01000000000000000000013b);
     }
-
-    // [OPSEC] Format: UUIDv4 + timestamp_ms (49 characters) to match native VSCode telemetry behavior
-    let generated = format!(
-        "{}{}",
-        uuid::Uuid::new_v4(),
-        chrono::Utc::now().timestamp_millis()
-    );
-    map.insert(account_id.to_string(), generated.clone());
-    generated
+    // Format jako UUID-style: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+    let bytes = hash.to_be_bytes();
+    format!(
+        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        bytes[0], bytes[1], bytes[2], bytes[3],
+        bytes[4], bytes[5], bytes[6], bytes[7],
+        bytes[8], bytes[9], bytes[10], bytes[11],
+        bytes[12], bytes[13], bytes[14], bytes[15]
+    )
 }
 
 #[cfg(test)]
@@ -49,41 +44,4 @@ mod tests {
         let y = derive_session_id("my_account@gmail.com");
         assert_eq!(x, y);
     }
-
-    #[test]
-    fn test_sequence_number() {
-        let a1 = next_sequence_number(Some("acc1"));
-        let a2 = next_sequence_number(Some("acc1"));
-        assert_eq!(a1 + 1, a2);
-
-        let b1 = next_sequence_number(Some("acc2"));
-        assert_ne!(a2, b1);
-    }
-}
-
-// [OPSEC v4.1.32] Global sequence counters per account for requestId
-static SEQUENCE_COUNTERS: LazyLock<Mutex<HashMap<String, u64>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-
-/// Gets and increments the global sequence number for an account
-/// This matches the original Go LS format agent/{timestamp}/{trajectory}/{seq_num}
-/// sequence starts at a high semi-random number for realism
-pub fn next_sequence_number(account_id: Option<&str>) -> u64 {
-    let key = account_id.unwrap_or("default");
-    let mut map = SEQUENCE_COUNTERS.lock().unwrap();
-
-    // Seed initial sequence with a deterministic pseudo-random offset based on account ID
-    let count = map.entry(key.to_string()).or_insert_with(|| {
-        let mut hash: i64 = -3750763034362895579_i64;
-        for byte in key.bytes() {
-            hash = hash.wrapping_mul(1099511628211_i64);
-            hash ^= byte as i64;
-        }
-        // Take absolute value mod 10000, then add a realistic starting offset (~3000-13000)
-        (hash.abs() % 10000) as u64 + 3800
-    });
-
-    let current = *count;
-    *count += 1;
-    current
 }

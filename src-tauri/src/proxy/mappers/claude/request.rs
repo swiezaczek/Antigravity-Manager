@@ -361,8 +361,7 @@ pub fn transform_claude_request_in(
     // ThinkingConfig was provided by the client, inject a default config with a budget
     // to prevent 'thinking requires a budget' errors from upstream APIs.
     if cleaned_req.thinking.is_none() && should_enable_thinking_by_default(&cleaned_req.model) {
-        let default_budget =
-            crate::proxy::model_specs::get_thinking_budget(&cleaned_req.model, token);
+        let default_budget = crate::proxy::model_specs::get_thinking_budget(&cleaned_req.model, token);
         tracing::info!(
             "[Thinking-Mode] Injecting default ThinkingConfig (budget={}) for model: {}",
             default_budget,
@@ -380,14 +379,7 @@ pub fn transform_claude_request_in(
     // [NEW] Generate session ID for signature tracking
     // This enables session-isolated signature storage, preventing cross-conversation pollution
     let session_id = SessionManager::extract_session_id(claude_req);
-    // [FIX #6] Scope session_id with account_id to prevent cross-account SignatureCache leakage
-    // Without this, account rotation during retry would cause Account B to use Account A's signatures
-    let session_id = if let Some(aid) = account_id {
-        format!("{}:{}", aid, session_id)
-    } else {
-        session_id
-    };
-    tracing::debug!("[Claude-Request] Session ID (scoped): {}", session_id);
+    tracing::debug!("[Claude-Request] Session ID: {}", session_id);
 
     // 检测是否有联网工具 (server tool or built-in tool)
     let has_web_search_tool = claude_req
@@ -439,8 +431,7 @@ pub fn transform_claude_request_in(
     // [IMPROVED] 提取 web search 模型为常量，便于维护
     const WEB_SEARCH_FALLBACK_MODEL: &str = "gemini-2.5-flash";
 
-    let mapped_model =
-        crate::proxy::common::model_mapping::map_claude_model_to_gemini(&claude_req.model);
+    let mapped_model = crate::proxy::common::model_mapping::map_claude_model_to_gemini(&claude_req.model);
 
     // 将 Claude 工具转为 Value 数组以便探测联网
     let tools_val: Option<Vec<Value>> = claude_req.tools.as_ref().map(|list| {
@@ -468,8 +459,7 @@ pub fn transform_claude_request_in(
 
     // Check if thinking is enabled in the request
     let thinking_type = claude_req.thinking.as_ref().map(|t| t.type_.as_str());
-    let mut is_thinking_enabled = thinking_type == Some("enabled")
-        || thinking_type == Some("adaptive")
+    let mut is_thinking_enabled = thinking_type == Some("enabled") || thinking_type == Some("adaptive") 
         || (thinking_type.is_none() && should_enable_thinking_by_default(&claude_req.model));
 
     // [NEW FIX] Check if target model supports thinking
@@ -496,6 +486,7 @@ pub fn transform_claude_request_in(
     // [REMOVED] 智能降级检查 (should_disable_thinking_due_to_history)
     // 原因: 该检查过于激进，会导致 Claude Code CLI 在历史记录不完美时永久禁用思考模式 (Issue #2006)
     // 现在的策略是依赖 thinking_utils.rs 中的 Recovery 机制来修复历史，而不是禁用思考。
+
 
     // [FIX #295 & #298] If thinking enabled but no signature available,
     // disable thinking to prevent Gemini 3 Pro rejection
@@ -617,14 +608,13 @@ pub fn transform_claude_request_in(
         });
     }
 
+
     // 深度清理 [undefined] 字符串 (Cherry Studio 等客户端常见注入)
     crate::proxy::mappers::common_utils::deep_clean_undefined(&mut inner_request, 0);
 
+
     if config.inject_google_search && !has_web_search_tool {
-        crate::proxy::mappers::common_utils::inject_google_search_tool(
-            &mut inner_request,
-            Some(&mapped_model),
-        );
+        crate::proxy::mappers::common_utils::inject_google_search_tool(&mut inner_request, Some(&mapped_model));
     }
 
     // Inject imageConfig if present (for image generation models)
@@ -661,41 +651,14 @@ pub fn transform_claude_request_in(
         }
     }
 
-    // [OPSEC v4.1.32] Generate per-account trajectory UUID for requestId
-    let derived_sid = if let Some(account_id) = account_id {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        let mut hasher = DefaultHasher::new();
-        account_id.hash(&mut hasher);
-        session_id.hash(&mut hasher);
-        let hash = hasher.finish();
-        format!(
-            "{:08x}-{:04x}-4{:03x}-{:04x}-{:012x}",
-            (hash >> 32) as u32,
-            (hash >> 16) as u16 & 0xffff,
-            hash as u16 & 0x0fff,
-            ((hash >> 48) as u16 & 0x3fff) | 0x8000,
-            hash & 0xffffffffffff
-        )
-    } else {
-        uuid::Uuid::new_v4().to_string()
-    };
-
+    // [ADDED v4.1.24] 注入稳定 sessionId 对齐官方规范
     if let Some(account_id) = account_id {
-        inner_request["sessionId"] =
-            json!(crate::proxy::common::session::derive_session_id(account_id));
+        inner_request["sessionId"] = json!(crate::proxy::common::session::derive_session_id(account_id));
     }
 
-    // [OPSEC v4.1.32] Use global sequence counter per account instead of internal array length
-    let seq_num = crate::proxy::common::session::next_sequence_number(account_id);
-
-    // [OPSEC v4.1.32] requestId: agent/{unix_ms}/{trajectory_uuid}/{global_seq} (matches official Go LS)
-    let request_id = format!(
-        "agent/{}/{}/{}",
-        chrono::Utc::now().timestamp_millis(),
-        derived_sid,
-        seq_num
-    );
+    // 生成 requestId
+    // [CHANGED v4.1.24] Structured requestId to match official format
+    let request_id = format!("agent/antigravity/{}/{}", &session_id[..session_id.len().min(8)], message_count);
 
     // 构建最终请求体
     let mut body = json!({
@@ -703,14 +666,17 @@ pub fn transform_claude_request_in(
         "requestId": request_id,
         "request": inner_request,
         "model": config.final_model,
-        "userAgent": "antigravity", // [OPSEC v4.1.32] Must match official Go LS client (was "vscode")
+        "userAgent": "antigravity",
         // [CHANGED v4.1.24] Use "agent" for all non-image requests
         "requestType": if config.request_type == "image_gen" { "image_gen" } else { "agent" },
     });
 
-    // [OPSEC] Wektor R: Usunięto nadpisywanie sessionId surowym metadata.user_id
-    // Poprzednio to cofało hashowanie sessionId, pozwalając na linkowanie kont.
-    // SessionId jest już ustawiony powyżej przez derive_session_id(account_id).
+    // 如果提供了 metadata.user_id，则复用为 sessionId
+    if let Some(metadata) = &claude_req.metadata {
+        if let Some(user_id) = &metadata.user_id {
+            body["request"]["sessionId"] = json!(user_id);
+        }
+    }
 
     // [FIX #593] 最后一道防线: 递归深度清理所有 cache_control 字段
     // 确保发送给 Antigravity 的请求中不包含任何 cache_control
@@ -719,6 +685,8 @@ pub fn transform_claude_request_in(
 
     Ok(body)
 }
+
+
 
 /// Check if thinking mode should be enabled by default for a given model
 ///
@@ -1332,13 +1300,11 @@ fn build_contents(
                                     if let Some(text) = block.get("text").and_then(|v| v.as_str()) {
                                         texts.push(text.to_string());
                                     } else if block.get("source").is_some() {
-                                        if block.get("type").and_then(|v| v.as_str())
-                                            == Some("image")
-                                        {
+                                        if block.get("type").and_then(|v| v.as_str()) == Some("image") {
                                             let source = block.get("source").unwrap();
                                             if let (Some(media_type), Some(data)) = (
                                                 source.get("media_type").and_then(|v| v.as_str()),
-                                                source.get("data").and_then(|v| v.as_str()),
+                                                source.get("data").and_then(|v| v.as_str())
                                             ) {
                                                 extra_parts.push(json!({
                                                     "inlineData": {
@@ -1727,7 +1693,10 @@ fn build_tools(
 
             // 2. Detect by name
             if let Some(name) = &tool.name {
-                if name == "web_search" || name == "google_search" || name == "builtin_web_search" {
+                if name == "web_search"
+                    || name == "google_search"
+                    || name == "builtin_web_search"
+                {
                     has_google_search = true;
                     continue;
                 }
@@ -1815,12 +1784,9 @@ fn build_generation_config(
             .thinking
             .as_ref()
             .and_then(|t| t.budget_tokens)
-            .unwrap_or_else(|| {
-                crate::proxy::model_specs::get_thinking_budget(mapped_model, token) as u32
-            });
+            .unwrap_or_else(|| crate::proxy::model_specs::get_thinking_budget(mapped_model, token) as u32);
 
-        let thinking_budget_cap =
-            crate::proxy::model_specs::get_thinking_budget(mapped_model, token);
+        let thinking_budget_cap = crate::proxy::model_specs::get_thinking_budget(mapped_model, token);
 
         let tb_config = crate::proxy::config::get_thinking_budget_config();
         let budget = match tb_config.mode {
@@ -1829,8 +1795,7 @@ fn build_generation_config(
                 let mut custom_value = tb_config.custom_value as u64;
                 // [FIX #1602] 针对 Gemini 系列模型，在自定义模式下也强制执行动态限额
                 let model_lower = mapped_model.to_lowercase();
-                let is_gemini_limited = (model_lower.contains("gemini")
-                    && !model_lower.contains("-image"))
+                let is_gemini_limited = (model_lower.contains("gemini") && !model_lower.contains("-image"))
                     || model_lower.contains("flash")
                     || model_lower.ends_with("-thinking");
 
@@ -1846,13 +1811,12 @@ fn build_generation_config(
             crate::proxy::config::ThinkingBudgetMode::Auto => {
                 // [FIX #1592] Use mapped model for robust detection, same as OpenAI protocol
                 let model_lower = mapped_model.to_lowercase();
-                let is_gemini_limited = (model_lower.contains("gemini")
-                    && !model_lower.contains("-image"))
+                let is_gemini_limited = (model_lower.contains("gemini") && !model_lower.contains("-image"))
                     || model_lower.contains("flash")
                     || model_lower.ends_with("-thinking");
                 if is_gemini_limited && budget_tokens as u64 > thinking_budget_cap {
                     tracing::info!(
-                        "[Claude-Request] Auto mode: capping thinking_budget from {} to {} for Gemini model {}",
+                        "[Claude-Request] Auto mode: capping thinking_budget from {} to {} for Gemini model {}", 
                         budget_tokens, thinking_budget_cap, mapped_model
                     );
                     thinking_budget_cap
@@ -1863,19 +1827,11 @@ fn build_generation_config(
             crate::proxy::config::ThinkingBudgetMode::Adaptive => budget_tokens as u64, // Adaptive 模式透传原始预算（但不作为限制），用于后续逻辑判断
         };
 
-        let global_mode_is_adaptive = matches!(
-            tb_config.mode,
-            crate::proxy::config::ThinkingBudgetMode::Adaptive
-        );
+        let global_mode_is_adaptive = matches!(tb_config.mode, crate::proxy::config::ThinkingBudgetMode::Adaptive);
         // 只要用户指定 adaptive 或者全局配置为 adaptive，且是支持的思维模型，就启用自适应
-        let should_use_adaptive = (user_is_adaptive || global_mode_is_adaptive)
-            && (mapped_model.to_lowercase().contains("claude")
-                || mapped_model.to_lowercase().contains("gemini-3"));
+        let should_use_adaptive = (user_is_adaptive || global_mode_is_adaptive) && (mapped_model.to_lowercase().contains("claude") || mapped_model.to_lowercase().contains("gemini-3"));
 
-        let effort = claude_req
-            .output_config
-            .as_ref()
-            .and_then(|c| c.effort.as_ref())
+        let effort = claude_req.output_config.as_ref().and_then(|c| c.effort.as_ref())
             .or_else(|| claude_req.thinking.as_ref().and_then(|t| t.effort.as_ref()));
 
         if should_use_adaptive {
@@ -1892,16 +1848,10 @@ fn build_generation_config(
                     Some("high") | Some("max") => "high",
                     _ => "high",
                 };
-                tracing::debug!(
-                    "[Claude-Request] Mapping adaptive mode to thinkingLevel: {} for Claude model",
-                    mapped_level
-                );
+                tracing::debug!("[Claude-Request] Mapping adaptive mode to thinkingLevel: {} for Claude model", mapped_level);
                 thinking_config["thinkingLevel"] = json!(mapped_level);
                 // Claude using thinkingLevel must NOT have thinkingBudget to avoid conflict
-                thinking_config
-                    .as_object_mut()
-                    .unwrap()
-                    .remove("thinkingBudget");
+                thinking_config.as_object_mut().unwrap().remove("thinkingBudget");
             } else {
                 // Gemini 系列（含 gemini-3.x）走 v1internal 协议，只接受 thinkingBudget，不支持 thinkingLevel
                 // [FIX #2007] Cherry Studio / Claude Protocol 400 Error Fix
@@ -1911,7 +1861,7 @@ fn build_generation_config(
                 tracing::debug!("[Claude-Request] Mapping adaptive mode to safe budget (24576) for Gemini model (thinkingLevel not supported)");
                 thinking_config["thinkingBudget"] = json!(24576);
             }
-
+            
             // 针对自适应模式，如果没有显式设置，确保 maxOutputTokens 给足空间
             // OpenAI mapper uses 57344 (24576 + 32768), we normally use 64k limit.
             if config.get("maxOutputTokens").is_none() {
@@ -1920,19 +1870,14 @@ fn build_generation_config(
         } else {
             // [FIX #2007] Opus 4.6 Thinking Alignment (OpenAI Protocol Recipe)
             // Explicitly set fixed budget for Opus 4.6 to match successful OpenAI pattern
-            if mapped_model
-                .to_lowercase()
-                .contains("claude-opus-4-6-thinking")
-            {
-                tracing::debug!(
-                    "[Opus-Alignment] Enforcing fixed thinkingBudget 24576 for Opus 4.6"
-                );
+            if mapped_model.to_lowercase().contains("claude-opus-4-6-thinking") {
+                tracing::debug!("[Opus-Alignment] Enforcing fixed thinkingBudget 24576 for Opus 4.6");
                 thinking_config["thinkingBudget"] = json!(24576);
             } else {
                 thinking_config["thinkingBudget"] = json!(budget);
             }
         }
-
+        
         config["thinkingConfig"] = thinking_config;
     }
 
@@ -1951,6 +1896,7 @@ fn build_generation_config(
         config["topK"] = json!(40); // [ADDED v4.1.24] Default topK=40 to match official client
     }
 
+
     // web_search 强制 candidateCount=1
     /*if has_web_search {
         config["candidateCount"] = json!(1);
@@ -1966,16 +1912,9 @@ fn build_generation_config(
     // 重新计算 should_use_adaptive (因为上面定义的作用域仅在其 if 块内有效，或者我们可以假设在这里也需要同样的逻辑)
     // 但为了简洁和解耦，我们这里重新从 config 读取
     let tb_config_chk = crate::proxy::config::get_thinking_budget_config();
-    let global_adaptive = matches!(
-        tb_config_chk.mode,
-        crate::proxy::config::ThinkingBudgetMode::Adaptive
-    );
-    let req_adaptive = claude_req
-        .thinking
-        .as_ref()
-        .map(|t| t.type_ == "adaptive")
-        .unwrap_or(false);
-
+    let global_adaptive = matches!(tb_config_chk.mode, crate::proxy::config::ThinkingBudgetMode::Adaptive);
+    let req_adaptive = claude_req.thinking.as_ref().map(|t| t.type_ == "adaptive").unwrap_or(false);
+    
     let is_adaptive_effective = (req_adaptive || global_adaptive) && model_lower.contains("claude");
     // [FIX] Lower default overhead to keep total under 65536
     let final_overhead = if is_adaptive_effective { 64000 } else { 32768 };
@@ -1995,23 +1934,19 @@ fn build_generation_config(
             let current = final_max_tokens.unwrap_or(0);
             if current <= budget as i64 {
                 // [FIX #1675] 针对图像模型使用更小的增量 (2048)
-                let overhead = if mapped_model.contains("-image") {
-                    2048
-                } else {
-                    8192
-                };
+                let overhead = if mapped_model.contains("-image") { 2048 } else { 8192 };
                 let boosted = (budget + overhead).min(65536); // [FIX] Never exceed hard limit
                 final_max_tokens = Some(boosted as i64);
                 tracing::info!(
-                    "[Generation-Config] Bumping maxOutputTokens to {} due to thinking budget of {}",
+                    "[Generation-Config] Bumping maxOutputTokens to {} due to thinking budget of {}", 
                     boosted, budget
                 );
             }
         } else if is_adaptive_effective {
-            // [FIX] Adaptive mode (no budget set in thinkingConfig), apply default maxOutputTokens
-            if final_max_tokens.is_none() {
-                final_max_tokens = Some(final_overhead as i64);
-            }
+             // [FIX] Adaptive mode (no budget set in thinkingConfig), apply default maxOutputTokens
+             if final_max_tokens.is_none() {
+                  final_max_tokens = Some(final_overhead as i64);
+             }
         }
     } else {
         // No thinkingConfig
@@ -2019,6 +1954,7 @@ fn build_generation_config(
             final_max_tokens = Some(final_overhead as i64);
         }
     }
+
 
     if let Some(val) = final_max_tokens {
         // [FIX] Cap maxOutputTokens to 65536 to avoid INVALID_ARGUMENT (Cherry Studio sends 128000)
@@ -2041,9 +1977,7 @@ fn build_generation_config(
     if !(model_lower.contains("claude-opus-4-6-thinking") && is_thinking_enabled) {
         config["stopSequences"] = json!(["<|user|>", "<|end_of_turn|>", "\n\nHuman:"]);
     } else {
-        tracing::debug!(
-            "[Opus-Alignment] Skipping stopSequences for Opus 4.6 to match OpenAI protocol"
-        );
+        tracing::debug!("[Opus-Alignment] Skipping stopSequences for Opus 4.6 to match OpenAI protocol");
     }
 
     config
@@ -2119,7 +2053,7 @@ fn is_model_compatible(cached: &str, target: &str) -> bool {
 mod tests {
     use super::*;
     use crate::proxy::common::json_schema::clean_json_schema;
-    use crate::proxy::config::{update_thinking_budget_config, ThinkingBudgetConfig};
+    use crate::proxy::config::{ThinkingBudgetConfig, update_thinking_budget_config};
 
     #[test]
     fn test_ephemeral_injection_debug() {
@@ -2181,8 +2115,7 @@ mod tests {
             quality: None,
         };
 
-        let result =
-            transform_claude_request_in(&req, "test-project", false, None, "test_session", None);
+        let result = transform_claude_request_in(&req, "test-project", false, None, "test_session", None);
         assert!(result.is_ok());
 
         let body = result.unwrap();
@@ -2279,8 +2212,7 @@ mod tests {
             quality: None,
         };
 
-        let result =
-            transform_claude_request_in(&req, "test-project", false, None, "test_session", None);
+        let result = transform_claude_request_in(&req, "test-project", false, None, "test_session", None);
         assert!(result.is_ok());
 
         let body = result.unwrap();
@@ -2350,8 +2282,7 @@ mod tests {
             quality: None,
         };
 
-        let result =
-            transform_claude_request_in(&req, "test-project", false, None, "test_session", None);
+        let result = transform_claude_request_in(&req, "test-project", false, None, "test_session", None);
         assert!(result.is_ok());
 
         // 验证请求成功转换
@@ -2425,8 +2356,7 @@ mod tests {
             quality: None,
         };
 
-        let result =
-            transform_claude_request_in(&req, "test-project", false, None, "test_session", None);
+        let result = transform_claude_request_in(&req, "test-project", false, None, "test_session", None);
         assert!(result.is_ok());
 
         let body = result.unwrap();
@@ -2476,8 +2406,7 @@ mod tests {
             quality: None,
         };
 
-        let result =
-            transform_claude_request_in(&req, "test-project", false, None, "test_session", None);
+        let result = transform_claude_request_in(&req, "test-project", false, None, "test_session", None);
         assert!(result.is_ok());
 
         let body = result.unwrap();
@@ -2533,8 +2462,7 @@ mod tests {
             quality: None,
         };
 
-        let result =
-            transform_claude_request_in(&req, "test-project", false, None, "test_session", None);
+        let result = transform_claude_request_in(&req, "test-project", false, None, "test_session", None);
         assert!(result.is_ok(), "Transformation failed");
         let body = result.unwrap();
         let contents = body["request"]["contents"].as_array().unwrap();
@@ -2582,8 +2510,7 @@ mod tests {
             quality: None,
         };
 
-        let result =
-            transform_claude_request_in(&req, "test-project", false, None, "test_session", None);
+        let result = transform_claude_request_in(&req, "test-project", false, None, "test_session", None);
         assert!(result.is_ok());
         let body = result.unwrap();
         let parts = body["request"]["contents"][0]["parts"].as_array().unwrap();
@@ -2774,8 +2701,7 @@ mod tests {
             quality: None,
         };
 
-        let result =
-            transform_claude_request_in(&req, "test-v", false, None, "test_session", None).unwrap();
+        let result = transform_claude_request_in(&req, "test-v", false, None, "test_session", None).unwrap();
         // [FIX] Since we removed the default 81920, maxOutputTokens should NOT be present
         // when max_tokens is None and thinking is disabled
         let gen_config = &result["request"]["generationConfig"];
@@ -2812,8 +2738,7 @@ mod tests {
             quality: None,
         };
 
-        let result =
-            transform_claude_request_in(&req, "proj", false, None, "test_session", None).unwrap();
+        let result = transform_claude_request_in(&req, "proj", false, None, "test_session", None).unwrap();
         let budget = result["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"]
             .as_u64()
             .unwrap();
@@ -2842,13 +2767,8 @@ mod tests {
         };
 
         // Should cap
-        let result_pro =
-            transform_claude_request_in(&req_pro, "proj", false, None, "test_session", None)
-                .unwrap();
-        assert_eq!(
-            result_pro["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"],
-            24576
-        );
+        let result_pro = transform_claude_request_in(&req_pro, "proj", false, None, "test_session", None).unwrap();
+        assert_eq!(result_pro["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"], 24576);
     }
 
     #[test]
@@ -2879,8 +2799,7 @@ mod tests {
         };
 
         // Transform
-        let result =
-            transform_claude_request_in(&req, "proj", false, None, "test_session", None).unwrap();
+        let result = transform_claude_request_in(&req, "proj", false, None, "test_session", None).unwrap();
         let gen_config = &result["request"]["generationConfig"];
 
         // thinkingConfig should be present (not forced disabled)
@@ -2920,8 +2839,7 @@ mod tests {
         };
 
         // Transform
-        let result =
-            transform_claude_request_in(&req, "proj", false, None, "test_session", None).unwrap();
+        let result = transform_claude_request_in(&req, "proj", false, None, "test_session", None).unwrap();
         let gen_config = &result["request"]["generationConfig"];
 
         // thinkingConfig SHOULD be injected because of default-on logic
@@ -2958,21 +2876,14 @@ mod tests {
         };
 
         // 3. Transform request
-        let result =
-            transform_claude_request_in(&req, "test-proj", false, None, "test_session", None)
-                .unwrap();
+        let result = transform_claude_request_in(&req, "test-proj", false, None, "test_session", None).unwrap();
 
         // 4. Verify thinkingConfig has includeThoughts: false
-        let gen_config = result["request"]["generationConfig"]
-            .as_object()
-            .expect("Should have generationConfig");
-        let thinking_config = gen_config
-            .get("thinkingConfig")
-            .and_then(|t| t.as_object())
-            .expect("Should have thinkingConfig (explicitly disabled)");
-
+        let gen_config = result["request"]["generationConfig"].as_object().expect("Should have generationConfig");
+        let thinking_config = gen_config.get("thinkingConfig").and_then(|t| t.as_object()).expect("Should have thinkingConfig (explicitly disabled)");
+        
         assert_eq!(thinking_config["includeThoughts"], false);
-
+        
         // 5. Reset global mode
         crate::proxy::config::update_image_thinking_mode(Some("enabled".to_string()));
     }
@@ -3009,10 +2920,8 @@ mod tests {
         };
 
         // Transform
-        let result =
-            transform_claude_request_in(&req, "test-proj", false, None, "test_session", None)
-                .unwrap();
-
+        let result = transform_claude_request_in(&req, "test-proj", false, None, "test_session", None).unwrap();
+        
         let gen_config = result["request"]["generationConfig"].as_object().unwrap();
         let thinking_config = gen_config["thinkingConfig"].as_object().unwrap();
 
@@ -3066,27 +2975,19 @@ mod tests {
 
         // 模拟映射到 Gemini 2.0
         let mapped_model = "gemini-2.0-flash-exp";
-
+        
         // 这里我们直接测试 build_tools 函数 (它是 pub(crate) 且在同模块下)
         let result = build_tools(&req.tools, true, mapped_model);
         assert!(result.is_ok());
-
+        
         let tools_val = result.unwrap().expect("Should have tools");
         let tools_arr = tools_val.as_array().expect("Tools should be an array");
-
+        
         let has_google_search = tools_arr.iter().any(|t| t.get("googleSearch").is_some());
-        let has_functions = tools_arr
-            .iter()
-            .any(|t| t.get("functionDeclarations").is_some());
-
-        assert!(
-            has_google_search,
-            "Gemini 2.0 should support mixed Google Search"
-        );
-        assert!(
-            has_functions,
-            "Gemini 2.0 should support mixed function declarations"
-        );
+        let has_functions = tools_arr.iter().any(|t| t.get("functionDeclarations").is_some());
+        
+        assert!(has_google_search, "Gemini 2.0 should support mixed Google Search");
+        assert!(has_functions, "Gemini 2.0 should support mixed function declarations");
     }
 
     #[test]
@@ -3125,23 +3026,18 @@ mod tests {
 
         // 模拟映射到 Gemini 1.5
         let mapped_model = "gemini-1.5-flash-002";
-
+        
         // 测试 build_tools 函数
         let result = build_tools(&req.tools, true, mapped_model);
         assert!(result.is_ok());
-
+        
         let tools_val = result.unwrap().expect("Should have tools");
         let tools_arr = tools_val.as_array().expect("Tools should be an array");
-
+        
         let has_google_search = tools_arr.iter().any(|t| t.get("googleSearch").is_some());
-        let has_functions = tools_arr
-            .iter()
-            .any(|t| t.get("functionDeclarations").is_some());
-
-        assert!(
-            !has_google_search,
-            "Older Gemini models should NOT have mixed tools"
-        );
+        let has_functions = tools_arr.iter().any(|t| t.get("functionDeclarations").is_some());
+        
+        assert!(!has_google_search, "Older Gemini models should NOT have mixed tools");
         assert!(has_functions);
     }
 }

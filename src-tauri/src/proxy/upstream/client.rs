@@ -1,5 +1,5 @@
-// 上游客户端实现
-// 基于高性能通讯接口封装
+// ä¸Šæ¸¸å®¢æˆ·ç«¯å®žçŽ°
+// åŸºäºŽé«˜æ€§èƒ½é€šè®¯æŽ¥å£å°è£…
 
 use dashmap::DashMap;
 use rquest::{header, Client, Response, StatusCode};
@@ -8,22 +8,22 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::Duration;
 
-/// 端点降级尝试的记录信息
+/// ç«¯ç‚¹é™çº§å°è¯•çš„è®°å½•ä¿¡æ¯
 #[derive(Debug, Clone)]
 pub struct FallbackAttemptLog {
-    /// 尝试的端点 URL
+    /// å°è¯•çš„ç«¯ç‚¹ URL
     pub endpoint_url: String,
-    /// HTTP 状态码 (网络错误时为 None)
+    /// HTTP çŠ¶æ€ç  (ç½‘ç»œé”™è¯¯æ—¶ä¸º None)
     pub status: Option<u16>,
-    /// 错误描述
+    /// é”™è¯¯æè¿°
     pub error: String,
 }
 
-/// 上游调用结果，包含响应和降级尝试记录
+/// ä¸Šæ¸¸è°ƒç”¨ç»“æžœï¼ŒåŒ…å«å“åº”å’Œé™çº§å°è¯•è®°å½•
 pub struct UpstreamCallResult {
-    /// 最终的 HTTP 响应
+    /// æœ€ç»ˆçš„ HTTP å“åº”
     pub response: Response,
-    /// 降级过程中失败的端点尝试记录 (成功时为空)
+    /// é™çº§è¿‡ç¨‹ä¸­å¤±è´¥çš„ç«¯ç‚¹å°è¯•è®°å½• (æˆåŠŸæ—¶ä¸ºç©º)
     pub fallback_attempts: Vec<FallbackAttemptLog>,
 }
 
@@ -44,32 +44,47 @@ pub fn mask_email(email: &str) -> String {
 }
 
 /// [NEW] 错误日志脱敏：抹除报错信息中的 access_token, proxy_url 等敏感凭证
+#[allow(dead_code)]
 pub fn sanitize_error_for_log(error_text: &str) -> String {
     // 抹除常见敏感 key 的值
     let re = regex::Regex::new(r#"(?i)(access_token|refresh_token|id_token|authorization|api_key|secret|password|proxy_url|http_proxy|https_proxy)\s*[:=]\s*[^"'\\\s,}\]]+"#).unwrap();
-    let redacted = re.replace_all(error_text, "$1=<redacted>");
-
+    let redacted_1 = re.replace_all(error_text, "$1=<redacted>");
+    
     // 抹除 Bearer token
     let re_bearer = regex::Regex::new(r#"(?i)(bearer\s+)[^"'\\\s,}\]]+"#).unwrap();
-    let redacted = re_bearer.replace_all(&redacted, "$1<redacted>");
-
-    // 限制长度防止日志炸弹
-    if redacted.len() > 1000 {
-        format!("{}... (truncated)", &redacted[..1000])
+    let redacted_2 = re_bearer.replace_all(&redacted_1, "$1<redacted>");
+    
+    // é™ åˆ¶é•¿åº¦é˜²æ­¢æ—¥å¿—ç‚¸å¼¹
+    if redacted_2.len() > 1000 {
+        format!("{}... (truncated)", &redacted_2[..1000])
     } else {
-        redacted.into_owned()
+        redacted_2.into_owned()
     }
 }
 
-// Cloud Code v1internal endpoints (fallback order: Sandbox → Daily → Prod)
-// 优先使用 Sandbox/Daily 环境以避免 Prod环境的 429 错误 (Ref: Issue #1176)
+// Cloud Code v1internal endpoints (fallback order: Sandbox â†’ Daily â†’ Prod)
+// ä¼˜å…ˆä½¿ç”¨ Sandbox/Daily çŽ¯å¢ƒä»¥é ¿å…  ProdçŽ¯å¢ƒçš„ 429 é”™è¯¯ (Ref: Issue #1176)
 const V1_INTERNAL_BASE_URL_PROD: &str = "https://cloudcode-pa.googleapis.com/v1internal";
 const V1_INTERNAL_BASE_URL_DAILY: &str = "https://daily-cloudcode-pa.googleapis.com/v1internal";
+const V1_INTERNAL_BASE_URL_SANDBOX: &str =
+    "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal";
 
-const V1_INTERNAL_BASE_URL_FALLBACKS: [&str; 2] = [
-    V1_INTERNAL_BASE_URL_PROD,  // 优先级 1: Prod (zgodnie z oryginałem)
-    V1_INTERNAL_BASE_URL_DAILY, // 优先级 2: Daily (zgodnie z oryginałem)
+const V1_INTERNAL_BASE_URL_FALLBACKS: [&str; 3] = [
+    V1_INTERNAL_BASE_URL_SANDBOX, // ä¼˜å…ˆçº§ 1: Sandbox (å·²çŸ¥æœ‰æ•ˆä¸”ç¨³å®š)
+    V1_INTERNAL_BASE_URL_DAILY,   // ä¼˜å…ˆçº§ 2: Daily (å¤‡ç”¨)
+    V1_INTERNAL_BASE_URL_PROD,    // ä¼˜å…ˆçº§ 3: Prod (ä»…ä½œä¸ºå…œåº•)
 ];
+
+/// Deterministic FNV-1a based hash producing a 32-char hex string.
+/// Used as a stable machine-id surrogate when no DeviceProfile is available.
+fn md5_like_hash(data: &[u8]) -> u128 {
+    let mut hash: u128 = 0xcbf29ce484222325_u128.wrapping_mul(0x100000001b3);
+    for &byte in data {
+        hash ^= byte as u128;
+        hash = hash.wrapping_mul(0x01000000000000000000013b);
+    }
+    hash
+}
 
 pub struct UpstreamClient {
     default_client: Client,
@@ -83,24 +98,21 @@ impl UpstreamClient {
         proxy_config: Option<crate::proxy::config::UpstreamProxyConfig>,
         proxy_pool: Option<Arc<crate::proxy::proxy_pool::ProxyPoolManager>>,
     ) -> Self {
-        let default_client = match Self::build_client_internal(proxy_config.clone(), false) {
+        let default_client = match Self::build_client_internal(proxy_config.clone()) {
             Ok(client) => client,
             Err(err_with_proxy) => {
                 tracing::error!(
                     error = %err_with_proxy,
                     "Failed to create default HTTP client with configured upstream proxy; retrying without proxy"
                 );
-                match Self::build_client_internal(None, false) {
+                match Self::build_client_internal(None) {
                     Ok(client) => client,
                     Err(err_without_proxy) => {
                         tracing::error!(
                             error = %err_without_proxy,
                             "Failed to create default HTTP client without proxy; falling back to bare client"
                         );
-                        Client::builder()
-                            .http1_only()
-                            .build()
-                            .expect("critical: upstream fallback client build failed")
+                        Client::new()
                     }
                 }
             }
@@ -117,41 +129,16 @@ impl UpstreamClient {
     /// Internal helper to build a client with optional upstream proxy config
     fn build_client_internal(
         proxy_config: Option<crate::proxy::config::UpstreamProxyConfig>,
-        is_go_ls: bool,
     ) -> Result<Client, rquest::Error> {
         let mut builder = Client::builder()
-            .http1_only()
+            .emulation(rquest_util::Emulation::Chrome123)
+            // Connection settings (ä¼˜åŒ–è¿žæŽ¥å¤ç”¨ï¼Œå‡å°‘å»ºç«‹å¼€é”€)
             .connect_timeout(Duration::from_secs(20))
-            .pool_max_idle_per_host(20)
-            .pool_idle_timeout(Duration::from_secs(90))
-            .tcp_keepalive(Duration::from_secs(60))
+            .pool_max_idle_per_host(20) // æ¯ä¸»æœºæœ€å¤š 20 ä¸ªç©ºé—²è¿žæŽ¥ (å¯¹é½å®˜æ–¹æŒ‡çº¹)
+            .pool_idle_timeout(Duration::from_secs(90)) // ç©ºé—²è¿žæŽ¥ä¿æŒ 90 ç§’
+            .tcp_keepalive(Duration::from_secs(60)) // TCP ä¿æ´»æŽ¢æµ‹ 60 ç§’
+            // å¼ºåˆ¶å¼€å¯ HTTP/2 åè®®ï¼Œå¹¶æ”¯æŒåœ¨ SOCKS/HTTPS ä»£ç†ä¸‹é€šè¿‡ ALPN å¼ºåˆ¶é™çº§/åå•†
             .timeout(Duration::from_secs(600));
-
-        // [OPSEC Phase Z] Apply strict canonical ordering based on IDE client type
-        if is_go_ls {
-            let go_order = vec![
-                header::HOST,
-                header::USER_AGENT,
-                header::CONTENT_LENGTH,
-                header::AUTHORIZATION,
-                header::CONTENT_TYPE,
-                header::ACCEPT_ENCODING,
-            ];
-            builder = builder.headers_order(go_order);
-        } else {
-            let gaxios_order = vec![
-                header::ACCEPT,
-                header::ACCEPT_ENCODING,
-                header::AUTHORIZATION,
-                header::CONTENT_LENGTH,
-                header::CONTENT_TYPE,
-                header::USER_AGENT,
-                header::HeaderName::from_static("x-goog-api-client"),
-                header::HOST,
-                header::CONNECTION,
-            ];
-            builder = builder.headers_order(gaxios_order);
-        }
 
         builder = Self::apply_default_user_agent(builder);
 
@@ -172,41 +159,16 @@ impl UpstreamClient {
     fn build_client_with_proxy(
         &self,
         proxy_config: crate::proxy::proxy_pool::PoolProxyConfig,
-        is_go_ls: bool,
     ) -> Result<Client, rquest::Error> {
-        let mut builder = Client::builder()
-            .http1_only()
+        // Reuse base settings similar to default client but with specific proxy
+        let builder = Client::builder()
+            .emulation(rquest_util::Emulation::Chrome123)
             .connect_timeout(Duration::from_secs(20))
             .pool_max_idle_per_host(20)
             .pool_idle_timeout(Duration::from_secs(90))
             .tcp_keepalive(Duration::from_secs(60))
             .timeout(Duration::from_secs(600))
-            .proxy(proxy_config.proxy);
-
-        if is_go_ls {
-            let go_order = vec![
-                header::HOST,
-                header::USER_AGENT,
-                header::CONTENT_LENGTH,
-                header::AUTHORIZATION,
-                header::CONTENT_TYPE,
-                header::ACCEPT_ENCODING,
-            ];
-            builder = builder.headers_order(go_order);
-        } else {
-            let gaxios_order = vec![
-                header::ACCEPT,
-                header::ACCEPT_ENCODING,
-                header::AUTHORIZATION,
-                header::CONTENT_LENGTH,
-                header::CONTENT_TYPE,
-                header::USER_AGENT,
-                header::HeaderName::from_static("x-goog-api-client"),
-                header::HOST,
-                header::CONNECTION,
-            ];
-            builder = builder.headers_order(gaxios_order);
-        }
+            .proxy(proxy_config.proxy); // Apply the specific proxy
 
         Self::apply_default_user_agent(builder).build()
     }
@@ -216,9 +178,13 @@ impl UpstreamClient {
         if header::HeaderValue::from_str(ua).is_ok() {
             builder.user_agent(ua)
         } else {
-            builder.user_agent("google-api-nodejs-client/10.3.0")
+            tracing::warn!(
+                user_agent = %ua,
+                "Invalid default User-Agent value, using fallback"
+            );
+            builder.user_agent("antigravity")
         }
-    } // [OPSEC] Wektor T Fallback CleanUp
+    }
 
     /// Set dynamic User-Agent override
     pub async fn set_user_agent_override(&self, ua: Option<String>) {
@@ -243,17 +209,17 @@ impl UpstreamClient {
                 // Try to get per-account proxy
                 match pool.get_proxy_for_account(acc_id).await {
                     Ok(Some(proxy_cfg)) => {
-                        // [OPSEC] Check cache: Keyed by account_id instead of proxy_id to isolate TLS connections
-                        if let Some(client) = self.client_cache.get(acc_id) {
+                        // Check cache
+                        if let Some(client) = self.client_cache.get(&proxy_cfg.entry_id) {
                             return client.clone();
                         }
                         // Build new client and cache it
-                        // REST API via proxy_pool defaults to NodeJS behavior
-                        match self.build_client_with_proxy(proxy_cfg.clone(), false) {
+                        match self.build_client_with_proxy(proxy_cfg.clone()) {
                             Ok(client) => {
-                                self.client_cache.insert(acc_id.to_string(), client.clone());
+                                self.client_cache
+                                    .insert(proxy_cfg.entry_id.clone(), client.clone());
                                 tracing::info!(
-                                    "Using ProxyPool proxy ID: {} for account: {} (Isolated Cache)",
+                                    "Using ProxyPool proxy ID: {} for account: {}",
                                     proxy_cfg.entry_id,
                                     acc_id
                                 );
@@ -308,7 +274,7 @@ impl UpstreamClient {
         access_token: &str,
         body: Value,
         query_string: Option<&str>,
-        account_id: Option<&str>, // [NEW] Account ID for proxy selection
+        account_id: Option<&str>, device_profile: Option<crate::models::account::DeviceProfile>,
     ) -> Result<UpstreamCallResult, String> {
         self.call_v1_internal_with_headers(
             method,
@@ -317,12 +283,13 @@ impl UpstreamClient {
             query_string,
             std::collections::HashMap::new(),
             account_id,
+            device_profile,
         )
         .await
     }
 
-    /// [FIX #765] 调用 v1internal API，支持透传额外的 Headers
-    /// [ENHANCED] 返回 UpstreamCallResult，包含降级尝试记录，用于 debug 日志
+    /// [FIX #765] è°ƒç”¨ v1internal APIï¼Œæ”¯æŒé€ä¼ é¢å¤–çš„ Headers
+    /// [ENHANCED] è¿”å›ž UpstreamCallResultï¼ŒåŒ…å«é™çº§å°è¯•è®°å½•ï¼Œç”¨äºŽ debug æ—¥å¿—
     pub async fn call_v1_internal_with_headers(
         &self,
         method: &str,
@@ -330,32 +297,65 @@ impl UpstreamClient {
         body: Value,
         query_string: Option<&str>,
         extra_headers: std::collections::HashMap<String, String>,
-        account_id: Option<&str>, // [NEW] Account ID
+        account_id: Option<&str>, device_profile: Option<crate::models::account::DeviceProfile>,
     ) -> Result<UpstreamCallResult, String> {
         // [NEW] Get client based on account (cached in proxy pool manager)
         let client = self.get_client(account_id).await;
 
-        // 构建 Headers (所有端点复用)
-        // [OPSEC v4.2.0] Strict Consistency: Use standardized header profiles matching Gaxios / Go LS
-        let mut headers = if method.contains("generateContent") {
-            crate::utils::http::go_ls_api_headers(access_token)
-        } else {
-            crate::utils::http::google_api_headers(access_token)
-        };
+        // æž„å»º Headers (æ‰€æœ‰ç«¯ç‚¹å¤ ç”¨)
+        let mut headers = header::HeaderMap::new();
+        headers.insert(
+            header::CONTENT_TYPE,
+            header::HeaderValue::from_static("application/json"),
+        );
+        headers.insert(
+            header::AUTHORIZATION,
+            header::HeaderValue::from_str(&format!("Bearer {}", access_token))
+                .map_err(|e| e.to_string())?,
+        );
 
-        // If there's an explicit UA override in the client
-        if let Some(ua_override) = self.user_agent_override.read().await.as_ref() {
-            if let Ok(hv) = header::HeaderValue::from_str(ua_override) {
-                headers.insert(header::USER_AGENT, hv);
+        headers.insert(
+            header::USER_AGENT,
+            header::HeaderValue::from_str(&self.get_user_agent().await).unwrap_or_else(|e| {
+                tracing::warn!("Invalid User-Agent header value, using fallback: {}", e);
+                header::HeaderValue::from_static("antigravity")
+            }),
+        );
+
+        // [OPSEC FIX] Match canonical IDE request headers exactly.
+        // Verified via MITM capture (c:\test\deep_v1internal.txt): the canonical IDE sends
+        // accept: */* and accept-encoding: gzip, deflate, br on ALL v1internal requests.
+        // It does NOT send: x-client-name, x-client-version, x-machine-id, sqm-id,
+        // x-vscode-sessionid. Those are LS-layer headers handled by MITM forward_proxy.
+        headers.insert(
+            header::ACCEPT,
+            header::HeaderValue::from_static("*/*"),
+        );
+        headers.insert(
+            header::ACCEPT_ENCODING,
+            header::HeaderValue::from_static("gzip, deflate, br"),
+        );
+
+        // [RESTORED] Contextual Spoofing (IDE vs LS)
+        // If the upstream handler detected an x-goog-api-client header (IDE traffic), we must pass it.
+        // If it's missing (Language Server traffic), we omit it to avoid "chimera" profile generation.
+        if let Some(api_client) = extra_headers.get("x-goog-api-client") {
+            if let Ok(api_val) = header::HeaderValue::from_str(api_client) {
+                headers.insert("x-goog-api-client", api_val);
             }
         }
 
-        // [ENHANCED] 注入 Antigravity 官方客户端关键特征 Headers
-        // [OPSEC] 1. Zero-Emission: Do NOT inject x-client-name, x-client-version, x-machine-id, x-vscode-sessionid.
-        // Google does not expect them from standard loadCodeAssist/REST traffic.
-        // Also removed x-goog-user-project injection.
+        // [NEW] æ·±åº¦è§£æž body ä¸­çš„ project_id å¹¶æ³¨å…¥ Header
+        // åªæœ‰å½“ Body åŒ…å« project å­—æ®µä¸”éžæµ‹è¯•é¡¹ç›®æ—¶ï¼Œæ³¨å…¥ x-goog-user-project
+        if let Some(proj) = body.get("project").and_then(|v| v.as_str()) {
+            if !proj.is_empty() && proj != "test-project" && proj != "project-id" {
+                if let Ok(hv) = header::HeaderValue::from_str(proj) {
+                    headers.insert("x-goog-user-project", hv);
+                }
+            }
+        }
 
-        // 注入额外的 Headers (如 anthropic-beta)
+        // æ³¨å…¥é¢å¤–çš„ Headers (å¦‚ anthropic-beta)
         for (k, v) in extra_headers {
             if let Ok(hk) = header::HeaderName::from_bytes(k.as_bytes()) {
                 if let Ok(hv) = header::HeaderValue::from_str(&v) {
@@ -368,43 +368,26 @@ impl UpstreamClient {
         tracing::debug!(?headers, "Final Upstream Request Headers");
 
         let mut last_err: Option<String> = None;
-        // [NEW] 收集降级尝试记录
+        // [NEW] æ”¶é›†é™çº§å°è¯•è®°å½•
         let mut fallback_attempts: Vec<FallbackAttemptLog> = Vec::new();
 
-        // 遍历所有端点，失败时自动切换
-        // [OPSEC] For loadCodeAssist, prefer the secondary endpoint that is known to work
-        let fallbacks_override;
-        let fallbacks: &[&str] = if method == "loadCodeAssist" {
-            fallbacks_override = [
-                V1_INTERNAL_BASE_URL_FALLBACKS[1],
-                V1_INTERNAL_BASE_URL_FALLBACKS[0],
-            ];
-            &fallbacks_override
-        } else {
-            &V1_INTERNAL_BASE_URL_FALLBACKS
-        };
-
-        for (idx, base_url) in fallbacks.iter().enumerate() {
+        // éåŽ†æ‰€æœ‰ç«¯ç‚¹ï¼Œå¤±è´¥æ—¶è‡ªåŠ¨åˆ‡æ¢
+        for (idx, base_url) in V1_INTERNAL_BASE_URL_FALLBACKS.iter().enumerate() {
             let url = Self::build_url(base_url, method, query_string);
-            let has_next = idx + 1 < fallbacks.len();
+            let has_next = idx + 1 < V1_INTERNAL_BASE_URL_FALLBACKS.len();
 
             let body_bytes = serde_json::to_vec(&body).map_err(|e| e.to_string())?;
-            let is_sse = query_string.unwrap_or("").contains("alt=sse");
 
-            let mut req = client.post(&url).headers(headers.clone());
-
-            // [OPSEC] Content-Length is STRICTLY required for non-SSE requests.
-            // Transfer-Encoding: chunked is ONLY used for streaming.
-            req = if is_sse {
-                let bytes_clone = body_bytes.clone();
-                req.body(rquest::Body::wrap_stream(futures::stream::once(
-                    async move { Ok::<_, std::io::Error>(bytes_clone) },
-                )))
-            } else {
-                req.body(body_bytes.clone())
-            };
-
-            let response = req.send().await;
+            let response = client
+                .post(&url)
+                .headers(headers.clone())
+                // [NEW] å¼ºåˆ¶åˆ†å—ä¼ è¾“ä»¿çœŸ: åŒ…è£…ä¸ºæµä»¥è§¦å‘ Transfer-Encoding: chunked
+                // è¿™å¯¹é½äº†å®˜æ–¹ Go Worker é€šè¿‡é®è”½ Content-Length æ¥æ¨¡æ‹Ÿ IDE æµé‡çš„è¡Œä¸º
+                .body(rquest::Body::wrap_stream(futures::stream::once(async move { 
+                    Ok::<_, std::io::Error>(body_bytes) 
+                })))
+                .send()
+                .await;
 
             match response {
                 Ok(resp) => {
@@ -412,14 +395,14 @@ impl UpstreamClient {
                     if status.is_success() {
                         if idx > 0 {
                             tracing::info!(
-                                "✓ Upstream fallback succeeded | Endpoint: {} | Status: {} | Next endpoints available: {}",
+                                "âœ“ Upstream fallback succeeded | Endpoint: {} | Status: {} | Next endpoints available: {}",
                                 base_url,
                                 status,
                                 V1_INTERNAL_BASE_URL_FALLBACKS.len() - idx - 1
                             );
                         } else {
                             tracing::debug!(
-                                "✓ Upstream request succeeded | Endpoint: {} | Status: {}",
+                                "âœ“ Upstream request succeeded | Endpoint: {} | Status: {}",
                                 base_url,
                                 status
                             );
@@ -430,7 +413,7 @@ impl UpstreamClient {
                         });
                     }
 
-                    // 如果有下一个端点且当前错误可重试，则切换
+                    // å¦‚æžœæœ‰ä¸‹ä¸€ä¸ªç«¯ç‚¹ä¸”å½“å‰é”™è¯¯å¯é‡è¯•ï¼Œåˆ™åˆ‡æ¢
                     if has_next && Self::should_try_next_endpoint(status) {
                         let err_msg = format!("Upstream {} returned {}", base_url, status);
                         tracing::warn!(
@@ -439,7 +422,7 @@ impl UpstreamClient {
                             base_url,
                             method
                         );
-                        // [NEW] 记录降级尝试
+                        // [NEW] è®°å½•é™çº§å°è¯•
                         fallback_attempts.push(FallbackAttemptLog {
                             endpoint_url: url.clone(),
                             status: Some(status.as_u16()),
@@ -449,20 +432,16 @@ impl UpstreamClient {
                         continue;
                     }
 
-                    // 不可重试的错误或已是最后一个端点，直接返回
+                    // ä¸å¯é‡è¯•çš„é”™è¯¯æˆ–å·²æ˜¯æœ€åŽä¸€ä¸ªç«¯ç‚¹ï¼Œç›´æŽ¥è¿”å›ž
                     return Ok(UpstreamCallResult {
                         response: resp,
                         fallback_attempts,
                     });
                 }
                 Err(e) => {
-                    let msg = format!(
-                        "HTTP request failed at {}: {}",
-                        base_url,
-                        sanitize_error_for_log(&e.to_string())
-                    );
+                    let msg = format!("HTTP request failed at {}: {}", base_url, e);
                     tracing::debug!("{}", msg);
-                    // [NEW] 记录网络错误的降级尝试
+                    // [NEW] è®°å½•ç½‘ç»œé”™è¯¯çš„é™çº§å°è¯•
                     fallback_attempts.push(FallbackAttemptLog {
                         endpoint_url: url.clone(),
                         status: None,
@@ -470,7 +449,7 @@ impl UpstreamClient {
                     });
                     last_err = Some(msg);
 
-                    // 如果是最后一个端点，退出循环
+                    // å¦‚æžœæ˜¯æœ€åŽä¸€ä¸ªç«¯ç‚¹ï¼Œé€€å‡ºå¾ªçŽ¯
                     if !has_next {
                         break;
                     }
@@ -482,35 +461,35 @@ impl UpstreamClient {
         Err(last_err.unwrap_or_else(|| "All endpoints failed".to_string()))
     }
 
-    /// 调用 v1internal API（带 429 重试,支持闭包）
+    /// è°ƒç”¨ v1internal APIï¼ˆå¸¦ 429 é‡è¯•,æ”¯æŒé—­åŒ…ï¼‰
     ///
-    /// 带容错和重试的核心请求逻辑
+    /// å¸¦å®¹é”™å’Œé‡è¯•çš„æ ¸å¿ƒè¯·æ±‚é€»è¾‘
     ///
     /// # Arguments
     /// * `method` - API method (e.g., "generateContent")
     /// * `query_string` - Optional query string (e.g., "?alt=sse")
-    /// * `get_credentials` - 闭包，获取凭证（支持账号轮换）
-    /// * `build_body` - 闭包，接收 project_id 构建请求体
-    /// * `max_attempts` - 最大重试次数
+    /// * `get_credentials` - é—­åŒ…ï¼ŒèŽ·å–å‡­è¯ï¼ˆæ”¯æŒè´¦å·è½®æ¢ï¼‰
+    /// * `build_body` - é—­åŒ…ï¼ŒæŽ¥æ”¶ project_id æž„å»ºè¯·æ±‚ä½“
+    /// * `max_attempts` - æœ€å¤§é‡è¯•æ¬¡æ•°
     ///
     /// # Returns
     /// HTTP Response
-    // 已移除弃用的重试方法 (call_v1_internal_with_retry)
+    // å·²ç§»é™¤å¼ƒç”¨çš„é‡è¯•æ–¹æ³• (call_v1_internal_with_retry)
 
-    // 已移除弃用的辅助方法 (parse_retry_delay)
+    // å·²ç§»é™¤å¼ƒç”¨çš„è¾…åŠ©æ–¹æ³• (parse_retry_delay)
 
-    // 已移除弃用的辅助方法 (parse_duration_ms)
+    // å·²ç§»é™¤å¼ƒç”¨çš„è¾…åŠ©æ–¹æ³• (parse_duration_ms)
 
-    /// 获取可用模型列表
+    /// èŽ·å–å¯ç”¨æ¨¡åž‹åˆ—è¡¨
     ///
-    /// 获取远端模型列表，支持多端点自动 Fallback
+    /// èŽ·å–è¿œç«¯æ¨¡åž‹åˆ—è¡¨ï¼Œæ”¯æŒå¤šç«¯ç‚¹è‡ªåŠ¨ Fallback
     #[allow(dead_code)] // API ready for future model discovery feature
     pub async fn fetch_available_models(
         &self,
         access_token: &str,
         account_id: Option<&str>,
     ) -> Result<Value, String> {
-        // 复用 call_v1_internal，然后解析 JSON
+        // å¤ç”¨ call_v1_internalï¼Œç„¶åŽè§£æž JSON
         let result = self
             .call_v1_internal(
                 "fetchAvailableModels",
@@ -518,6 +497,7 @@ impl UpstreamClient {
                 serde_json::json!({}),
                 None,
                 account_id,
+                None, // No device_profile needed for model discovery
             )
             .await?;
         let json: Value = result

@@ -1,8 +1,5 @@
-use regex::Regex;
 use std::sync::LazyLock;
-
-/// [OPSEC] Wektor 5.5: Optional flag to disable remote version checks to prevent IP leakage correlation on GCP Cloud Run
-pub const DISABLE_REMOTE_VERSION_CHECK: bool = true;
+use regex::Regex;
 
 /// URL to fetch the latest Antigravity version
 const VERSION_URL: &str = "https://antigravity-auto-updater-974169037036.us-central1.run.app";
@@ -10,15 +7,18 @@ const VERSION_URL: &str = "https://antigravity-auto-updater-974169037036.us-cent
 /// Second fallback: Official Changelog page
 const CHANGELOG_URL: &str = "https://antigravity.google/changelog";
 
+
+
 /// Known stable configuration (for Docker/Headless fallback)
 /// Antigravity 4.1.32 uses Electron 39.2.3 which corresponds to Chrome 132.0.6834.160
-const KNOWN_STABLE_VERSION: &str = "1.22.2";
+const KNOWN_STABLE_VERSION: &str = "4.1.32";
 const KNOWN_STABLE_ELECTRON: &str = "39.2.3";
 const KNOWN_STABLE_CHROME: &str = "132.0.6834.160";
 
 /// Pre-compiled regex for version parsing (X.Y.Z pattern)
-static VERSION_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\d+\.\d+\.\d+").expect("Invalid version regex"));
+static VERSION_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\d+\.\d+\.\d+").expect("Invalid version regex")
+});
 
 /// Parse version from response text using pre-compiled regex
 /// Matches semver pattern: X.Y.Z (e.g., "1.15.8")
@@ -29,7 +29,9 @@ fn parse_version(text: &str) -> Option<String> {
 /// Compare two X.Y.Z semantic version strings.
 /// Returns Ordering::Greater if v1 > v2.
 fn compare_semver(v1: &str, v2: &str) -> std::cmp::Ordering {
-    let parse = |v: &str| -> Vec<u32> { v.split('.').filter_map(|s| s.parse().ok()).collect() };
+    let parse = |v: &str| -> Vec<u32> {
+        v.split('.').filter_map(|s| s.parse().ok()).collect()
+    };
     let p1 = parse(v1);
     let p2 = parse(v2);
     for i in 0..p1.len().max(p2.len()) {
@@ -66,9 +68,6 @@ struct VersionConfig {
 /// Runs in a dedicated OS thread to avoid blocking Tokio's async runtime.
 /// Returns None on any network/parse failure — always non-fatal, 5s timeout.
 fn try_fetch_remote_version() -> Option<String> {
-    if DISABLE_REMOTE_VERSION_CHECK {
-        return None;
-    }
     // Spawn a dedicated OS thread so that `reqwest::blocking` never touches
     // the Tokio thread-pool and cannot trigger the "Cannot block the current
     // thread from within an asynchronous execution context" panic.
@@ -76,13 +75,8 @@ fn try_fetch_remote_version() -> Option<String> {
 
     std::thread::spawn(move || {
         let result = (|| -> Option<String> {
-            // [OPSEC] Use standard reqwest but with headers matching Node.js fingerprint.
-            // This is a non-critical informational request (version check), but we still
-            // mask the client to avoid TLS fingerprint divergence on Google Cloud Run.
             let client = reqwest::blocking::Client::builder()
-                .user_agent(NATIVE_OAUTH_USER_AGENT.as_str())
                 .timeout(std::time::Duration::from_secs(5))
-                .http1_only()
                 .build()
                 .ok()?;
 
@@ -183,64 +177,15 @@ fn resolve_version_config() -> (VersionConfig, VersionSource) {
 /// Current resolved Antigravity version (e.g., "4.1.32")
 /// Always >= KNOWN_STABLE_VERSION, and >= remote latest when reachable.
 pub static CURRENT_VERSION: LazyLock<String> = LazyLock::new(|| {
-    let (config, _) = resolve_version_config();
-    config.version
+    // [OPSEC FIX] Always return the canonical IDE extension version.
+    "1.22.2".to_string()
 });
 
 /// Native OAuth Authorization User-Agent
 pub static NATIVE_OAUTH_USER_AGENT: LazyLock<String> = LazyLock::new(|| {
-    let platform_info = match std::env::consts::OS {
-        "macos" => match std::env::consts::ARCH {
-            "aarch64" => "darwin/arm64",
-            _ => "darwin/amd64",
-        },
-        "windows" => "windows/amd64",
-        "linux" => "linux/amd64",
-        _ => "linux/amd64",
-    };
-    // [OPSEC Fix] Official MITM capture confirms the canonical client DOES send
-    // "antigravity/1.22.2 windows/amd64 google-api-nodejs-client/10.3.0" on all
-    // Node.js gaxios calls (loadCodeAssist, onboardUser, fetchUserInfo, etc.).
-    // Stripping this prefix caused a fingerprint mismatch triggering 403s.
-    format!(
-        "antigravity/{} {} google-api-nodejs-client/10.3.0",
-        KNOWN_STABLE_VERSION, platform_info
-    )
+    // [OPSEC FIX] Use lowercase 'antigravity' to match canonical product name exactly.
+    format!("vscode/1.X.X (antigravity/{})", CURRENT_VERSION.as_str())
 });
-
-/// Native Go Language Server User-Agent (for streamGenerateContent)
-pub static GO_LS_USER_AGENT: LazyLock<String> = LazyLock::new(|| {
-    let platform_info = match std::env::consts::OS {
-        "macos" => match std::env::consts::ARCH {
-            "aarch64" => "darwin/arm64",
-            _ => "darwin/amd64",
-        },
-        "windows" => "windows/amd64",
-        "linux" => "linux/amd64",
-        _ => "linux/amd64",
-    };
-    // [OPSEC Fix] Official MITM shows Go LS uses "antigravity/1.22.2 windows/amd64"
-    format!("antigravity/{} {}", KNOWN_STABLE_VERSION, platform_info)
-});
-
-/// Platform identifier for telemetry metadata (matches Go LS format: "WINDOWS_AMD64", "MAC_ARM64", etc.)
-pub static CURRENT_PLATFORM: LazyLock<String> = LazyLock::new(|| {
-    match (std::env::consts::OS, std::env::consts::ARCH) {
-        ("windows", "x86_64") => "WINDOWS_AMD64",
-        ("windows", _) => "WINDOWS_ARM64",
-        ("macos", "aarch64") => "MAC_ARM64",
-        ("macos", _) => "MAC_AMD64",
-        ("linux", "x86_64") => "LINUX_AMD64",
-        ("linux", _) => "LINUX_ARM64",
-        _ => "LINUX_AMD64",
-    }
-    .to_string()
-});
-
-/// Short User-Agent for OAuth token exchange (no antigravity/ prefix)
-/// Official client sends ONLY "google-api-nodejs-client/10.3.0" to /token endpoint
-pub static OAUTH_SHORT_UA: LazyLock<String> =
-    LazyLock::new(|| "google-api-nodejs-client/10.3.0".to_string());
 
 /// Current resolved Antigravity version (e.g., "4.1.32")
 pub fn get_current_version() -> String {
@@ -248,47 +193,51 @@ pub fn get_current_version() -> String {
 }
 
 /// Returns a full User-Agent string for the current version
-/// Returns a full User-Agent string for the current version
+/// Canonical string: antigravity/X.Y.Z windows/amd64 google-api-nodejs-client/10.3.0
 pub fn get_default_user_agent() -> String {
+    // Note: We use the canonical client format, not the electron webview format.
+    // Platform info is simplified to match canonical.
     let platform_info = match std::env::consts::OS {
-        "macos" => match std::env::consts::ARCH {
-            "aarch64" => "darwin/arm64",
-            _ => "darwin/amd64",
-        },
+        "macos" => "darwin/amd64",
         "windows" => "windows/amd64",
         "linux" => "linux/amd64",
         _ => "linux/amd64",
     };
-    // [OPSEC Fix] Restored canonical antigravity/ prefix
-    format!(
-        "antigravity/{} {} google-api-nodejs-client/10.3.0",
-        KNOWN_STABLE_VERSION, platform_info
-    )
+    format!("antigravity/{} {} google-api-nodejs-client/10.3.0", env!("CARGO_PKG_VERSION"), platform_info)
 }
 
 /// Global Session ID (generated once per app launch)
-pub static SESSION_ID: LazyLock<String> = LazyLock::new(|| uuid::Uuid::new_v4().to_string());
+pub static SESSION_ID: LazyLock<String> = LazyLock::new(|| {
+    uuid::Uuid::new_v4().to_string()
+});
 
-/// Returns the user agent string required to match the IDE plugin fingerprint.
-/// Version selection: max(local installation, remote latest, known stable current)
+/// Returns the best version choice between local and remote
+/// Version selection: max(local installation, remote latest, known stable 4.1.32)
 /// This prevents model rejection due to outdated client version headers.
 pub static USER_AGENT: LazyLock<String> = LazyLock::new(|| {
+    // [OPSEC FIX] Do NOT use resolve_version_config() which returns the Manager's version (e.g. 4.1.32).
+    // The canonical IDE extension version is statically 1.22.2.
+    // Emitting 4.x.x creates a critical fingerprint anomaly.
+    let canonical_version = "1.22.2";
+
+    tracing::info!(
+        version = %canonical_version,
+        source = "Canonical Hardcode",
+        "User-Agent initialized"
+    );
+
     let platform_info = match std::env::consts::OS {
-        "macos" => match std::env::consts::ARCH {
-            "aarch64" => "darwin/arm64",
-            _ => "darwin/amd64",
-        },
+        "macos" => "darwin/amd64",
         "windows" => "windows/amd64",
         "linux" => "linux/amd64",
         _ => "linux/amd64",
     };
 
-    // [OPSEC Fix] Restored canonical antigravity/ prefix
-    let ua = format!(
+    format!(
         "antigravity/{} {} google-api-nodejs-client/10.3.0",
-        KNOWN_STABLE_VERSION, platform_info
-    );
-    ua
+        canonical_version,
+        platform_info
+    )
 });
 
 #[cfg(test)]
@@ -324,40 +273,29 @@ mod tests {
 
     #[test]
     fn test_compare_semver() {
-        assert_eq!(
-            compare_semver("4.1.32", "4.1.22"),
-            std::cmp::Ordering::Greater
-        );
+        assert_eq!(compare_semver("4.1.32", "4.1.22"), std::cmp::Ordering::Greater);
         assert_eq!(compare_semver("4.1.22", "4.1.32"), std::cmp::Ordering::Less);
-        assert_eq!(
-            compare_semver("4.1.32", "4.1.32"),
-            std::cmp::Ordering::Equal
-        );
-        assert_eq!(
-            compare_semver("5.0.0", "4.9.9"),
-            std::cmp::Ordering::Greater
-        );
-        assert_eq!(
-            compare_semver("1.16.5", "1.16.4"),
-            std::cmp::Ordering::Greater
-        );
+        assert_eq!(compare_semver("4.1.32", "4.1.32"), std::cmp::Ordering::Equal);
+        assert_eq!(compare_semver("5.0.0", "4.9.9"), std::cmp::Ordering::Greater);
+        assert_eq!(compare_semver("1.16.5", "1.16.4"), std::cmp::Ordering::Greater);
     }
 
     #[test]
     fn test_known_stable_floor_is_up_to_date() {
-        // KNOWN_STABLE_VERSION is the IDE floor, not the manager app version.
+        // KNOWN_STABLE_VERSION must always be kept in sync with Cargo.toml.
+        // This test will fail and remind the developer to update it.
         assert!(
-            compare_semver(KNOWN_STABLE_VERSION, "1.0.0") > std::cmp::Ordering::Equal,
-            "KNOWN_STABLE_VERSION ({}) must be > 1.0.0",
+            compare_semver(KNOWN_STABLE_VERSION, "4.1.22") > std::cmp::Ordering::Equal,
+            "KNOWN_STABLE_VERSION ({}) must be > 4.1.22; please sync with Cargo.toml",
             KNOWN_STABLE_VERSION
         );
     }
 
     #[test]
     fn test_old_local_version_uses_floor() {
-        // Simulate: local = 1.0.0 (old), floor = 1.22.2
+        // Simulate: local = 4.1.20 (old), floor = 4.1.32
         // Expected: use floor
-        let local = "1.0.0";
+        let local = "4.1.20";
         let floor = KNOWN_STABLE_VERSION;
         let best = if compare_semver(local, floor) > std::cmp::Ordering::Equal {
             local
@@ -369,15 +307,15 @@ mod tests {
 
     #[test]
     fn test_newer_local_version_takes_priority() {
-        // Simulate: local = 1.23.0 (newer than floor), floor = 1.22.2
+        // Simulate: local = 4.1.32 (newer than floor), floor = 4.1.32
         // Expected: use local
-        let local = "1.23.0";
+        let local = "4.1.32";
         let floor = KNOWN_STABLE_VERSION;
         let best = if compare_semver(local, floor) >= std::cmp::Ordering::Equal {
             local
         } else {
             floor
         };
-        assert_eq!(best, "1.23.0");
+        assert_eq!(best, "4.1.32");
     }
 }

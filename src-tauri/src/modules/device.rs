@@ -8,8 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
-// [OPSEC V19] Forensic path anonymization
-const DATA_DIR: &str = ".dev_proxy_cache";
+const DATA_DIR: &str = ".antigravity_tools";
 const GLOBAL_BASELINE: &str = "device_original.json";
 
 fn get_data_dir() -> Result<PathBuf, String> {
@@ -116,10 +115,10 @@ pub fn backup_storage(storage_path: &Path) -> Result<PathBuf, String> {
 /// Read current device profile from storage.json
 #[allow(dead_code)]
 pub fn read_profile(storage_path: &Path) -> Result<DeviceProfile, String> {
-    let content = fs::read_to_string(storage_path)
-        .map_err(|e| format!("read_failed ({:?}): {}", storage_path, e))?;
-    let json: Value = serde_json::from_str(&content)
-        .map_err(|e| format!("parse_failed ({:?}): {}", storage_path, e))?;
+    let content =
+        fs::read_to_string(storage_path).map_err(|e| format!("read_failed ({:?}): {}", storage_path, e))?;
+    let json: Value =
+        serde_json::from_str(&content).map_err(|e| format!("parse_failed ({:?}): {}", storage_path, e))?;
 
     // Supports nested telemetry or flat telemetry.xxx
     let get_field = |key: &str| -> Option<String> {
@@ -151,7 +150,8 @@ pub fn write_profile(storage_path: &Path, profile: &DeviceProfile) -> Result<(),
         return Err(format!("storage_json_missing: {:?}", storage_path));
     }
 
-    let content = fs::read_to_string(storage_path).map_err(|e| format!("read_failed: {}", e))?;
+    let content =
+        fs::read_to_string(storage_path).map_err(|e| format!("read_failed: {}", e))?;
     let mut json: Value =
         serde_json::from_str(&content).map_err(|e| format!("parse_failed: {}", e))?;
 
@@ -210,10 +210,9 @@ pub fn write_profile(storage_path: &Path, profile: &DeviceProfile) -> Result<(),
         );
     }
 
-    let updated =
-        serde_json::to_string_pretty(&json).map_err(|e| format!("serialize_failed: {}", e))?;
-    fs::write(storage_path, updated)
-        .map_err(|e| format!("write_failed ({:?}): {}", storage_path, e))?;
+    let updated = serde_json::to_string_pretty(&json)
+        .map_err(|e| format!("serialize_failed: {}", e))?;
+    fs::write(storage_path, updated).map_err(|e| format!("write_failed ({:?}): {}", storage_path, e))?;
     logger::log_info(&format!("device_profile_written to {:?}", storage_path));
 
     // Sync ItemTable.storage.serviceMachineId in state.vscdb
@@ -224,7 +223,8 @@ pub fn write_profile(storage_path: &Path, profile: &DeviceProfile) -> Result<(),
 /// Only sync serviceMachineId, don't change other fields
 #[allow(dead_code)]
 pub fn sync_service_machine_id(storage_path: &Path, service_id: &str) -> Result<(), String> {
-    let content = fs::read_to_string(storage_path).map_err(|e| format!("read_failed: {}", e))?;
+    let content =
+        fs::read_to_string(storage_path).map_err(|e| format!("read_failed: {}", e))?;
     let mut json: Value =
         serde_json::from_str(&content).map_err(|e| format!("parse_failed: {}", e))?;
 
@@ -235,8 +235,8 @@ pub fn sync_service_machine_id(storage_path: &Path, service_id: &str) -> Result<
         );
     }
 
-    let updated =
-        serde_json::to_string_pretty(&json).map_err(|e| format!("serialize_failed: {}", e))?;
+    let updated = serde_json::to_string_pretty(&json)
+        .map_err(|e| format!("serialize_failed: {}", e))?;
     fs::write(storage_path, updated).map_err(|e| format!("write_failed: {}", e))?;
     logger::log_info("service_machine_id_synced");
 
@@ -251,8 +251,7 @@ pub fn sync_service_machine_id_from_storage(storage_path: &Path) -> Result<(), S
         return Err("storage_json_missing".to_string());
     }
     let content = fs::read_to_string(storage_path).map_err(|e| format!("read_failed: {}", e))?;
-    let mut json: Value =
-        serde_json::from_str(&content).map_err(|e| format!("parse_failed: {}", e))?;
+    let mut json: Value = serde_json::from_str(&content).map_err(|e| format!("parse_failed: {}", e))?;
 
     let service_id = json
         .get("storage.serviceMachineId")
@@ -278,17 +277,13 @@ pub fn sync_service_machine_id_from_storage(storage_path: &Path) -> Result<(), S
         .is_none()
     {
         if let Some(map) = json.as_object_mut() {
-            map.insert(
-                "storage.serviceMachineId".to_string(),
-                Value::String(service_id.clone()),
-            );
+            map.insert("storage.serviceMachineId".to_string(), Value::String(service_id.clone()));
             dirty = true;
         }
     }
 
     if dirty {
-        let updated =
-            serde_json::to_string_pretty(&json).map_err(|e| format!("serialize_failed: {}", e))?;
+        let updated = serde_json::to_string_pretty(&json).map_err(|e| format!("serialize_failed: {}", e))?;
         fs::write(storage_path, updated).map_err(|e| format!("write_failed: {}", e))?;
         logger::log_info("service_machine_id_added");
     }
@@ -299,7 +294,10 @@ pub fn sync_service_machine_id_from_storage(storage_path: &Path) -> Result<(), S
 fn sync_state_service_machine_id_value(service_id: &str) -> Result<(), String> {
     let db_path = get_state_db_path()?;
     if !db_path.exists() {
-        logger::log_warn(&format!("state_db_missing: {:?}", db_path));
+        logger::log_warn(&format!(
+            "state_db_missing: {:?}",
+            db_path
+        ));
         return Ok(());
     }
 
@@ -391,19 +389,35 @@ pub fn restore_backup(storage_path: &Path, use_oldest: bool) -> Result<PathBuf, 
 
 /// Generate a new set of device fingerprints (Cursor/VSCode style)
 pub fn generate_profile() -> DeviceProfile {
-    // [OPSEC] Wektor 6.4 - Keep machineId and macMachineId identical 64-char hex strings to avoid mismatch correlation
-    let hex_64 = random_hex(64);
     DeviceProfile {
-        machine_id: hex_64.clone(),
-        mac_machine_id: hex_64,
+        machine_id: format!("auth0|user_{}", random_hex(32)),
+        mac_machine_id: new_standard_machine_id(),
         dev_device_id: Uuid::new_v4().to_string(),
         sqm_id: format!("{{{}}}", Uuid::new_v4().to_string().to_uppercase()),
     }
 }
 
 fn random_hex(length: usize) -> String {
-    let mut rng = rand::thread_rng();
-    (0..length)
-        .map(|_| format!("{:x}", rng.gen_range(0..16)))
+    rand::thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(length)
+        .map(char::from)
         .collect::<String>()
+        .to_lowercase()
+}
+
+fn new_standard_machine_id() -> String {
+    // xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx (y in 8..b)
+    let mut rng = rand::thread_rng();
+    let mut id = String::with_capacity(36);
+    for ch in "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".chars() {
+        if ch == '-' || ch == '4' {
+            id.push(ch);
+        } else if ch == 'x' {
+            id.push_str(&format!("{:x}", rng.gen_range(0..16)));
+        } else if ch == 'y' {
+            id.push_str(&format!("{:x}", rng.gen_range(8..12)));
+        }
+    }
+    id
 }

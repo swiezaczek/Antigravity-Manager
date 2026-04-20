@@ -56,6 +56,7 @@ pub struct ThinkingConfig {
     pub effort: Option<String>, // "low", "high", or "max"
 }
 
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResponseFormat {
     pub r#type: String,

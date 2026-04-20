@@ -1,12 +1,13 @@
-use crate::proxy::config::{ProxyEntry, ProxyPoolConfig, ProxySelectionStrategy};
-use dashmap::DashMap;
-use futures::{stream, StreamExt};
-use rquest::Client;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::RwLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use dashmap::DashMap;
+use rquest::Client;
+use futures::{stream, StreamExt};
+use std::time::Duration;
+use crate::proxy::config::{ProxyPoolConfig, ProxySelectionStrategy, ProxyEntry};
 
+use rquest_util::Emulation;
 use std::sync::OnceLock;
 
 /// 全局代理池管理器单例
@@ -35,21 +36,15 @@ pub struct PoolProxyConfig {
 /// 代理池管理器
 pub struct ProxyPoolManager {
     config: Arc<RwLock<ProxyPoolConfig>>,
-
+    
     /// 代理使用计数 (proxy_id -> count)
     usage_counter: Arc<DashMap<String, usize>>,
-
+    
     /// 账号到代理的绑定 (account_id -> proxy_id)
     account_bindings: Arc<DashMap<String, String>>,
-
+    
     /// 轮询索引 (用于 RoundRobin 策略)
     round_robin_index: Arc<AtomicUsize>,
-
-    /// [OPSEC] 账号隔离的客户端缓存池 (用于 inference 模型)
-    account_client_cache: Arc<DashMap<String, Client>>,
-
-    /// [OPSEC] 账号隔离的标准无特征客户端缓存池 (用于 OAuth 与 Quota)
-    account_standard_cache: Arc<DashMap<String, Client>>,
 }
 
 impl ProxyPoolManager {
@@ -64,10 +59,7 @@ impl ProxyPoolManager {
                 account_bindings.insert(account_id.clone(), proxy_id.clone());
             }
             if !cfg.account_bindings.is_empty() {
-                tracing::info!(
-                    "[ProxyPool] Loaded {} account bindings from config",
-                    cfg.account_bindings.len()
-                );
+                tracing::info!("[ProxyPool] Loaded {} account bindings from config", cfg.account_bindings.len());
             }
         }
 
@@ -76,8 +68,6 @@ impl ProxyPoolManager {
             usage_counter: Arc::new(DashMap::new()),
             account_bindings,
             round_robin_index: Arc::new(AtomicUsize::new(0)),
-            account_client_cache: Arc::new(DashMap::new()),
-            account_standard_cache: Arc::new(DashMap::new()),
         }
     }
 
@@ -86,56 +76,11 @@ impl ProxyPoolManager {
     /// 1. 账号显式绑定代理优先 (Account-Proxy Binding)
     /// 2. 如果无绑定，且开启了“自动全局”，取池中第一个节点
     /// 3. 如果以上均无，则检查全局上游代理 (Upstream Proxy) [由调用方 fallback]
-    pub async fn get_effective_client(
-        &self,
-        account_id: Option<&str>,
-        timeout_secs: u64,
-        is_go_ls: bool,
-    ) -> Client {
-        let cache_key = match account_id {
-            Some(id) => format!("{}:{}:{}", id, timeout_secs, is_go_ls),
-            None => format!("generic:{}:{}", timeout_secs, is_go_ls),
-        };
-
-        if let Some(client) = self.account_client_cache.get(&cache_key) {
-            return client.clone();
-        }
-
+    pub async fn get_effective_client(&self, account_id: Option<&str>, timeout_secs: u64) -> Client {
         let mut builder = Client::builder()
-            // [OPSEC] No emulation, force HTTP/1.1 to match Node.js MITM fingerprint
-            .http1_only()
+            .emulation(Emulation::Chrome123)
             .timeout(Duration::from_secs(timeout_secs));
-
-        if is_go_ls {
-            let go_order = vec![
-                rquest::header::HOST,
-                rquest::header::USER_AGENT,
-                rquest::header::CONTENT_LENGTH,
-                rquest::header::AUTHORIZATION,
-                rquest::header::CONTENT_TYPE,
-                rquest::header::ACCEPT_ENCODING,
-            ];
-            builder = builder.headers_order(go_order);
-        } else {
-            let gaxios_order = vec![
-                rquest::header::ACCEPT,
-                rquest::header::ACCEPT_ENCODING,
-                rquest::header::AUTHORIZATION,
-                rquest::header::CONTENT_LENGTH,
-                rquest::header::CONTENT_TYPE,
-                rquest::header::USER_AGENT,
-                rquest::header::HeaderName::from_static("x-goog-api-client"),
-                rquest::header::HOST,
-                rquest::header::CONNECTION,
-            ];
-            builder = builder.headers_order(gaxios_order);
-        }
-
-        if account_id.is_none() {
-            // [OPSEC] Prevent connection pooling for unauthenticated generic requests to stop Google tracking identical TLS sessions
-            builder = builder.pool_max_idle_per_host(0);
-        }
-
+        
         // 尝试获取代理配置
         let proxy_opt = if let Some(acc_id) = account_id {
             self.get_proxy_for_account(acc_id).await.ok().flatten()
@@ -143,17 +88,11 @@ impl ProxyPoolManager {
             // 没有 account_id 的通用请求，如果代理池启用，则默认从中选择节点作为出口
             let config = self.config.read().await;
             if config.enabled {
-                let res = self
-                    .select_proxy_from_pool(&config, None)
-                    .await
-                    .ok()
-                    .flatten();
+                let res = self.select_proxy_from_pool(&config).await.ok().flatten();
                 if let Some(ref p) = res {
-                    tracing::info!(
-                        "[Proxy] Route: Generic Request -> Proxy {} (Pool)",
-                        p.entry_id
-                    );
+                    tracing::info!("[Proxy] Route: Generic Request -> Proxy {} (Pool)", p.entry_id);
                 } else {
+                    // [FIX #1583] 明确记录池中无可用代理的情况
                     tracing::warn!("[Proxy] Route: Generic Request -> No available proxy in pool, falling back to upstream or direct");
                 }
                 res
@@ -165,94 +104,31 @@ impl ProxyPoolManager {
 
         if let Some(proxy_cfg) = proxy_opt {
             builder = builder.proxy(proxy_cfg.proxy);
+            // Already logged more detail in get_proxy_for_account or pool selection
         } else {
             // Fallback 到应用配置的单上游代理
             if let Ok(app_cfg) = crate::modules::config::load_app_config() {
                 let up = app_cfg.proxy.upstream_proxy;
                 if up.enabled && !up.url.is_empty() {
                     if let Ok(p) = rquest::Proxy::all(&up.url) {
-                        tracing::info!(
-                            "[Proxy] Route: {:?} -> Upstream: {} (AppConfig)",
-                            account_id.unwrap_or("Generic"),
-                            up.url
-                        );
+                        tracing::info!("[Proxy] Route: {:?} -> Upstream: {} (AppConfig)", account_id.unwrap_or("Generic"), up.url);
                         builder = builder.proxy(p);
                     }
                 } else {
-                    tracing::info!(
-                        "[Proxy] Route: {:?} -> Direct",
-                        account_id.unwrap_or("Generic")
-                    );
+                    tracing::info!("[Proxy] Route: {:?} -> Direct", account_id.unwrap_or("Generic"));
                 }
             }
         }
 
-        let new_client = builder.build().unwrap_or_else(|_| {
-            Client::builder()
-                .http1_only()
-                .build()
-                .expect("critical: fallback client build failed")
-        });
-        if account_id.is_some() {
-            self.account_client_cache
-                .insert(cache_key, new_client.clone());
-        }
-        new_client
+        builder.build().unwrap_or_else(|_| Client::new())
     }
 
     /// [NEW] 为指定账号获取“最终生效”的无特征 Standard HttpClient (专门用于纯净场景，如 OAuth 退还)
-    pub async fn get_effective_standard_client(
-        &self,
-        account_id: Option<&str>,
-        timeout_secs: u64,
-        allow_http2: bool,
-        is_go_ls: bool,
-    ) -> Client {
-        let cache_key = match account_id {
-            Some(id) => format!("{}:{}:{}:{}", id, timeout_secs, allow_http2, is_go_ls),
-            None => format!("generic:{}:{}:{}", timeout_secs, allow_http2, is_go_ls),
-        };
-
-        if let Some(client) = self.account_standard_cache.get(&cache_key) {
-            return client.clone();
-        }
-
-        let mut builder = Client::builder().timeout(Duration::from_secs(timeout_secs));
-
-        if !allow_http2 {
-            builder = builder.http1_only();
-        }
-
-        if is_go_ls {
-            let go_order = vec![
-                rquest::header::HOST,
-                rquest::header::USER_AGENT,
-                rquest::header::CONTENT_LENGTH,
-                rquest::header::AUTHORIZATION,
-                rquest::header::CONTENT_TYPE,
-                rquest::header::ACCEPT_ENCODING,
-            ];
-            builder = builder.headers_order(go_order);
-        } else {
-            let gaxios_order = vec![
-                rquest::header::ACCEPT,
-                rquest::header::ACCEPT_ENCODING,
-                rquest::header::AUTHORIZATION,
-                rquest::header::CONTENT_LENGTH,
-                rquest::header::CONTENT_TYPE,
-                rquest::header::USER_AGENT,
-                rquest::header::HeaderName::from_static("x-goog-api-client"),
-                rquest::header::HOST,
-                rquest::header::CONNECTION,
-            ];
-            builder = builder.headers_order(gaxios_order);
-        }
-
-        if account_id.is_none() {
-            // [OPSEC] Prevent connection pooling for unauthenticated generic requests
-            builder = builder.pool_max_idle_per_host(0);
-        }
-
+    pub async fn get_effective_standard_client(&self, account_id: Option<&str>, timeout_secs: u64) -> Client {
+        let mut builder = Client::builder()
+            // 无 Emulation 设置，走纯正的基础 TLS 指纹
+            .timeout(Duration::from_secs(timeout_secs));
+        
         // 尝试获取代理配置
         let proxy_opt = if let Some(acc_id) = account_id {
             self.get_proxy_for_account(acc_id).await.ok().flatten()
@@ -260,24 +136,15 @@ impl ProxyPoolManager {
             // 没有 account_id 的通用请求，如果代理池启用，则默认从中选择节点作为出口
             let config = self.config.read().await;
             if config.enabled {
-                let res = self
-                    .select_proxy_from_pool(&config, None)
-                    .await
-                    .ok()
-                    .flatten();
+                let res = self.select_proxy_from_pool(&config).await.ok().flatten();
                 if let Some(ref p) = res {
-                    tracing::info!(
-                        "[Proxy] Route: Generic Request (Standard Client) -> Proxy {} (Pool)",
-                        p.entry_id
-                    );
+                    tracing::info!("[Proxy] Route: Generic Request (Standard Client) -> Proxy {} (Pool)", p.entry_id);
                 } else {
                     tracing::warn!("[Proxy] Route: Generic Request (Standard Client) -> No available proxy in pool, falling back to upstream or direct");
                 }
                 res
             } else {
-                tracing::debug!(
-                    "[Proxy] Route: Generic Request (Standard Client) -> Proxy pool disabled"
-                );
+                tracing::debug!("[Proxy] Route: Generic Request (Standard Client) -> Proxy pool disabled");
                 None
             }
         };
@@ -290,35 +157,16 @@ impl ProxyPoolManager {
                 let up = app_cfg.proxy.upstream_proxy;
                 if up.enabled && !up.url.is_empty() {
                     if let Ok(p) = rquest::Proxy::all(&up.url) {
-                        tracing::info!(
-                            "[Proxy] Route: {:?} (Standard Client) -> Upstream: {} (AppConfig)",
-                            account_id.unwrap_or("Generic"),
-                            up.url
-                        );
+                        tracing::info!("[Proxy] Route: {:?} (Standard Client) -> Upstream: {} (AppConfig)", account_id.unwrap_or("Generic"), up.url);
                         builder = builder.proxy(p);
                     }
                 } else {
-                    tracing::info!(
-                        "[Proxy] Route: {:?} (Standard Client) -> Direct",
-                        account_id.unwrap_or("Generic")
-                    );
+                    tracing::info!("[Proxy] Route: {:?} (Standard Client) -> Direct", account_id.unwrap_or("Generic"));
                 }
             }
         }
 
-        let new_client = builder.build().unwrap_or_else(|_| {
-            let mut fb = Client::builder().timeout(Duration::from_secs(timeout_secs));
-            if !allow_http2 {
-                fb = fb.http1_only();
-            }
-            fb.build()
-                .expect("critical: fallback standard client build failed")
-        });
-        if account_id.is_some() {
-            self.account_standard_cache
-                .insert(cache_key, new_client.clone());
-        }
-        new_client
+        builder.build().unwrap_or_else(|_| Client::new())
     }
 
     /// 为账号获取代理
@@ -327,35 +175,25 @@ impl ProxyPoolManager {
         account_id: &str,
     ) -> Result<Option<PoolProxyConfig>, String> {
         let config = self.config.read().await;
-
+        
         if !config.enabled || config.proxies.is_empty() {
             return Ok(None);
         }
-
+        
         // 1. 优先使用账号绑定 (专属 IP)
         if let Some(proxy) = self.get_bound_proxy(account_id, &config).await? {
-            tracing::info!(
-                "[Proxy] Route: Account {} -> Proxy {} (Bound)",
-                account_id,
-                proxy.entry_id
-            );
+            tracing::info!("[Proxy] Route: Account {} -> Proxy {} (Bound)", account_id, proxy.entry_id);
             return Ok(Some(proxy));
         }
 
         // 2. 否则从池中策略选择 (公用池)
-        let res = self
-            .select_proxy_from_pool(&config, Some(account_id))
-            .await?;
+        let res = self.select_proxy_from_pool(&config).await?;
         if let Some(ref p) = res {
-            tracing::info!(
-                "[Proxy] Route: Account {} -> Proxy {} (Pool)",
-                account_id,
-                p.entry_id
-            );
+            tracing::info!("[Proxy] Route: Account {} -> Proxy {} (Pool)", account_id, p.entry_id);
         }
         Ok(res)
     }
-
+    
     /// 获取账号绑定的代理
     async fn get_bound_proxy(
         &self,
@@ -375,72 +213,52 @@ impl ProxyPoolManager {
         }
         Ok(None)
     }
-
+    
     /// 从代理池中选择代理
     async fn select_proxy_from_pool(
         &self,
         config: &ProxyPoolConfig,
-        account_id: Option<&str>,
     ) -> Result<Option<PoolProxyConfig>, String> {
         // [FIX] 专属隔离逻辑：剔除所有已被绑定的代理，保护专属 IP 账号的安全
-        let bound_ids: std::collections::HashSet<String> = self
-            .account_bindings
+        let bound_ids: std::collections::HashSet<String> = self.account_bindings
             .iter()
             .map(|kv| kv.value().clone())
             .collect();
 
-        let healthy_proxies: Vec<_> = config
-            .proxies
-            .iter()
+        let healthy_proxies: Vec<_> = config.proxies.iter()
             .filter(|p| {
-                if !p.enabled {
-                    return false;
-                }
-                if config.auto_failover && !p.is_healthy {
-                    return false;
-                }
+                if !p.enabled { return false; }
+                if config.auto_failover && !p.is_healthy { return false; }
                 // 如果该代理已被某个账号“专属绑定”，则不再参与公用轮询
-                if bound_ids.contains(&p.id) {
-                    return false;
-                }
+                if bound_ids.contains(&p.id) { return false; }
                 true
             })
             .collect();
-
+        
         if healthy_proxies.is_empty() {
-            // 如果所有代理都被绑定了，或者池本身为空，尝试返回池中开启了且不依赖绑定的代理
-            // (这里可以根据业务进一步调整，目前保持严谨隔离)
+             // 如果所有代理都被绑定了，或者池本身为空，尝试返回池中开启了且不依赖绑定的代理
+             // (这里可以根据业务进一步调整，目前保持严谨隔离)
             return Ok(None);
         }
-
+        
         let selected = match config.strategy {
-            ProxySelectionStrategy::RoundRobin | ProxySelectionStrategy::Random => {
-                if let Some(acc_id) = account_id {
-                    // [OPSEC] Wektor P: Account Hash Identity. Zapobiega "Impossible Device Travel".
-                    use std::collections::hash_map::DefaultHasher;
-                    use std::hash::{Hash, Hasher};
-                    let mut hasher = DefaultHasher::new();
-                    acc_id.hash(&mut hasher);
-                    let index = (hasher.finish() as usize) % healthy_proxies.len();
-                    tracing::debug!(
-                        "[Proxy] Route: Account {} -> Proxy {} (Account Hash Identity)",
-                        acc_id,
-                        healthy_proxies[index].id
-                    );
-                    Some(healthy_proxies[index])
-                } else if config.strategy == ProxySelectionStrategy::RoundRobin {
-                    self.select_round_robin(&healthy_proxies)
-                } else {
-                    self.select_random(&healthy_proxies)
-                }
+            ProxySelectionStrategy::RoundRobin => {
+                self.select_round_robin(&healthy_proxies)
             }
-            ProxySelectionStrategy::Priority => self.select_by_priority(&healthy_proxies),
+            ProxySelectionStrategy::Random => {
+                self.select_random(&healthy_proxies)
+            }
+            ProxySelectionStrategy::Priority => {
+                self.select_by_priority(&healthy_proxies)
+            }
             ProxySelectionStrategy::LeastConnections => {
                 self.select_least_connections(&healthy_proxies)
             }
-            ProxySelectionStrategy::WeightedRoundRobin => self.select_weighted(&healthy_proxies),
+            ProxySelectionStrategy::WeightedRoundRobin => {
+                self.select_weighted(&healthy_proxies)
+            }
         };
-
+        
         if let Some(entry) = selected {
             // 更新计数
             *self.usage_counter.entry(entry.id.clone()).or_insert(0) += 1;
@@ -449,36 +267,31 @@ impl ProxyPoolManager {
             Ok(None)
         }
     }
-
+    
     fn select_round_robin<'a>(&self, proxies: &[&'a ProxyEntry]) -> Option<&'a ProxyEntry> {
-        if proxies.is_empty() {
-            return None;
-        }
+        if proxies.is_empty() { return None; }
         let index = self.round_robin_index.fetch_add(1, Ordering::Relaxed);
         Some(proxies[index % proxies.len()])
     }
 
     fn select_random<'a>(&self, proxies: &[&'a ProxyEntry]) -> Option<&'a ProxyEntry> {
-        if proxies.is_empty() {
-            return None;
-        }
+        if proxies.is_empty() { return None; }
         use rand::seq::SliceRandom;
         let mut rng = rand::thread_rng();
         proxies.choose(&mut rng).copied()
     }
-
+    
     fn select_by_priority<'a>(&self, proxies: &[&'a ProxyEntry]) -> Option<&'a ProxyEntry> {
         // priority 越小越优先
         proxies.iter().min_by_key(|p| p.priority).copied()
     }
-
+    
     fn select_least_connections<'a>(&self, proxies: &[&'a ProxyEntry]) -> Option<&'a ProxyEntry> {
-        proxies
-            .iter()
-            .min_by_key(|p| self.usage_counter.get(&p.id).map(|v| *v).unwrap_or(0))
-            .copied()
+        proxies.iter().min_by_key(|p| {
+            self.usage_counter.get(&p.id).map(|v| *v).unwrap_or(0)
+        }).copied()
     }
-
+    
     fn select_weighted<'a>(&self, proxies: &[&'a ProxyEntry]) -> Option<&'a ProxyEntry> {
         // 简单实现: 类似优先级的加权, 这里暂用 Priority 代替
         self.select_by_priority(proxies)
@@ -488,20 +301,20 @@ impl ProxyPoolManager {
     fn build_proxy_config(&self, entry: &ProxyEntry) -> Result<PoolProxyConfig, String> {
         let url = crate::proxy::config::normalize_proxy_url(&entry.url);
 
-        let mut proxy =
-            rquest::Proxy::all(&url).map_err(|e| format!("Invalid proxy URL: {}", e))?;
-
+        let mut proxy = rquest::Proxy::all(&url)
+            .map_err(|e| format!("Invalid proxy URL: {}", e))?;
+        
         // 添加认证
         if let Some(auth) = &entry.auth {
             proxy = proxy.basic_auth(&auth.username, &auth.password);
         }
-
+        
         Ok(PoolProxyConfig {
             proxy,
             entry_id: entry.id.clone(),
         })
     }
-
+    
     /// 绑定账号到代理
     pub async fn bind_account_to_proxy(
         &self,
@@ -519,16 +332,11 @@ impl ProxyPoolManager {
             if let Some(entry) = config.proxies.iter().find(|p| p.id == proxy_id) {
                 if let Some(max) = entry.max_accounts {
                     if max > 0 {
-                        let current_count = self
-                            .account_bindings
-                            .iter()
+                        let current_count = self.account_bindings.iter()
                             .filter(|kv| *kv.value() == proxy_id)
                             .count();
                         if current_count >= max {
-                            return Err(format!(
-                                "Proxy {} has reached max accounts limit",
-                                proxy_id
-                            ));
+                            return Err(format!("Proxy {} has reached max accounts limit", proxy_id));
                         }
                     }
                 }
@@ -536,38 +344,18 @@ impl ProxyPoolManager {
         }
 
         // 更新内存中的绑定
-        self.account_bindings
-            .insert(account_id.clone(), proxy_id.clone());
-
-        // [OPSEC] 立即清除该账号的物理 TLS 缓存池
-        self.account_client_cache
-            .retain(|k, _| !k.starts_with(&account_id));
-        self.account_standard_cache
-            .retain(|k, _| !k.starts_with(&account_id));
+        self.account_bindings.insert(account_id.clone(), proxy_id.clone());
 
         // 持久化到配置文件
         self.persist_bindings().await;
 
-        tracing::info!(
-            "[ProxyPool] Bound account {} to proxy {}",
-            account_id,
-            proxy_id
-        );
+        tracing::info!("[ProxyPool] Bound account {} to proxy {}", account_id, proxy_id);
         Ok(())
     }
 
     /// 解绑账号代理
     pub async fn unbind_account_proxy(&self, account_id: String) {
         self.account_bindings.remove(&account_id);
-
-        // [OPSEC] 立即清除该账号的物理 TLS 缓存池
-        self.account_client_cache
-            .retain(|k, _| !k.starts_with(&account_id));
-        self.account_standard_cache
-            .retain(|k, _| !k.starts_with(&account_id));
-
-        // [OPSEC Phase 11] Wymieć Ghost Cache zapobiegajac wyciekowi 'Resurrection Leak' (stare ETagi po zmianie konta i proxy)
-        crate::proxy::mitm::forward_proxy::clear_account_ghost_cache(&account_id);
 
         // 持久化到配置文件
         self.persist_bindings().await;
@@ -577,15 +365,12 @@ impl ProxyPoolManager {
 
     /// 获取账号当前绑定的代理ID
     pub fn get_account_binding(&self, account_id: &str) -> Option<String> {
-        self.account_bindings
-            .get(account_id)
-            .map(|v| v.value().clone())
+        self.account_bindings.get(account_id).map(|v| v.value().clone())
     }
 
     /// 获取所有绑定关系的快照
     pub fn get_all_bindings_snapshot(&self) -> std::collections::HashMap<String, String> {
-        self.account_bindings
-            .iter()
+        self.account_bindings.iter()
             .map(|kv| (kv.key().clone(), kv.value().clone()))
             .collect()
     }
@@ -617,9 +402,7 @@ impl ProxyPoolManager {
         // 我们先复制一份需要检查的代理列表
         let proxies_to_check: Vec<_> = {
             let config = self.config.read().await;
-            config
-                .proxies
-                .iter()
+            config.proxies.iter()
                 .filter(|p| p.enabled)
                 .cloned()
                 .collect()
@@ -629,7 +412,7 @@ impl ProxyPoolManager {
         let results = stream::iter(proxies_to_check)
             .map(|proxy| async move {
                 let (is_healthy, latency) = self.check_proxy_health(&proxy).await;
-
+                
                 let latency_msg = if let Some(ms) = latency {
                     format!("{}ms", ms)
                 } else {
@@ -659,10 +442,10 @@ impl ProxyPoolManager {
                 proxy.last_check_time = Some(chrono::Utc::now().timestamp());
             }
         }
-
+        
         Ok(())
     }
-
+    
     /// 检查单个代理健康状态
     async fn check_proxy_health(&self, entry: &ProxyEntry) -> (bool, Option<u64>) {
         let check_url = if let Some(url) = &entry.health_check_url {
@@ -674,38 +457,30 @@ impl ProxyPoolManager {
         } else {
             "http://cp.cloudflare.com/generate_204"
         };
-
+        
         // 尝试构建 Client，如果失败直接视为不健康
         let proxy_res = self.build_proxy_config(entry);
-        if let Err(e) = proxy_res {
-            tracing::error!(
-                "Proxy {} build config failed: {}",
-                entry.name,
-                crate::proxy::upstream::client::sanitize_error_for_log(&e)
-            );
-            return (false, None);
+        if let Err(e) = proxy_res { 
+            tracing::error!("Proxy {} build config failed: {}", entry.url, e);
+            return (false, None); 
         }
         let proxy_cfg = proxy_res.unwrap();
 
         let client_result = Client::builder()
             .proxy(proxy_cfg.proxy)
-            // [OPSEC] No Chrome emulation for health checks — use native BoringSSL
-            .http1_only()
+            .emulation(Emulation::Chrome123)
             .timeout(Duration::from_secs(10))
+            .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
             .build();
-
+        
         let client = match client_result {
             Ok(c) => c,
             Err(e) => {
-                tracing::error!(
-                    "Proxy {} build client failed: {}",
-                    entry.name,
-                    crate::proxy::upstream::client::sanitize_error_for_log(&e.to_string())
-                );
+                tracing::error!("Proxy {} build client failed: {}", entry.url, e);
                 return (false, None);
-            }
+            },
         };
-
+        
         let start = std::time::Instant::now();
         match client.get(check_url).send().await {
             Ok(resp) => {
@@ -713,22 +488,14 @@ impl ProxyPoolManager {
                 if resp.status().is_success() {
                     (true, Some(latency))
                 } else {
-                    tracing::warn!(
-                        "Proxy {} health check status error: {}",
-                        entry.url,
-                        resp.status()
-                    );
+                    tracing::warn!("Proxy {} health check status error: {}", entry.url, resp.status());
                     (false, None)
                 }
-            }
+            },
             Err(e) => {
-                tracing::warn!(
-                    "Proxy {} health check request failed: {}",
-                    entry.name,
-                    crate::proxy::upstream::client::sanitize_error_for_log(&e.to_string())
-                );
+                tracing::warn!("Proxy {} health check request failed: {}", entry.url, e);
                 (false, None)
-            }
+            },
         }
     }
 

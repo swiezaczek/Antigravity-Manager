@@ -155,27 +155,13 @@ pub async fn handle_generate(
             .await;
 
         last_email = Some(email.clone());
-        let email_masked = mask_email(&email); // [FIX] Mask email
-        info!(
-            "✓ Using account: {} (type: {})",
-            email_masked, config.request_type
-        );
-
-        // [FIX #6] Scope session_id with account_id to prevent cross-account SignatureCache leakage
-        let scoped_session_id = format!("{}:{}", account_id, session_id);
+        info!("✓ Using account: {} (type: {})", email, config.request_type);
 
         // 5. 包装请求 (project injection)
         // [FIX #765] Pass session_id to wrap_request for signature injection
         // [NEW] 获取完整 Token 对象以注入动态规格 (dynamic > static default > 65535)
         let token_obj = token_manager.get_token_by_id(&account_id);
-        let wrapped_body = wrap_request(
-            &body,
-            &project_id,
-            &mapped_model,
-            Some(account_id.as_str()),
-            Some(&scoped_session_id),
-            token_obj.as_ref(),
-        );
+        let wrapped_body = wrap_request(&body, &project_id, &mapped_model, Some(account_id.as_str()), Some(&session_id), token_obj.as_ref());
 
         if debug_logger::is_enabled(&debug_cfg) {
             let payload = json!({
@@ -215,19 +201,12 @@ pub async fn handle_generate(
             );
         }
 
-        // [Telemetry v7] Register Trajectory for MITM Proxying
-        let telemetry_stream_start = std::time::Instant::now();
-        let telemetry_trajectory_uuid = crate::proxy::telemetry::registry::extract_trajectory_uuid(
-            wrapped_body.get("requestId").and_then(|v| v.as_str()),
-        );
-
-        // Map the Go LS trajectory UUID to this proxy account's token/project
-        crate::proxy::telemetry::registry::TelemetryRegistry::global().register(
-            telemetry_trajectory_uuid.clone(),
-            access_token.clone(),
-            project_id.clone(),
-            account_id.clone(),
-        );
+        // [Contextual Spoofing] Pass x-goog-api-client if present (IDE vs LS distinction)
+        if let Some(val) = headers.get("x-goog-api-client") {
+            if let Ok(val_str) = val.to_str() {
+                extra_headers.insert("x-goog-api-client".to_string(), val_str.to_string());
+            }
+        }
 
         let call_result = match upstream
             .call_v1_internal_with_headers(
@@ -237,6 +216,7 @@ pub async fn handle_generate(
                 query_string,
                 extra_headers.clone(),
                 Some(account_id.as_str()),
+                token_obj.as_ref().and_then(|t| t.device_profile.clone()),
             )
             .await
         {
@@ -290,9 +270,8 @@ pub async fn handle_generate(
         let upstream_url = response.url().to_string();
         let status = response.status();
 
-        // [NEW] 提取官方 TraceID (no longer propagated — R1 replaces with random hex)
-        let _cloud_code_trace_id = response
-            .headers()
+        // [NEW] 提取官方 TraceID
+        let cloud_code_trace_id = response.headers()
             .get("x-cloudaicompanion-trace-id")
             .and_then(|h| h.to_str().ok())
             .map(|s| s.to_string());
@@ -323,7 +302,7 @@ pub async fn handle_generate(
                     meta,
                 );
                 let mut buffer = BytesMut::new();
-                let s_id = scoped_session_id.clone(); // [FIX #6] Use account-scoped session_id
+                let s_id = session_id.clone(); // Clone for stream closure
 
                 // [FIX #859] Implement peek logic for Gemini stream to prevent 0-token 200 OK
                 let mut first_chunk = None;
@@ -370,21 +349,20 @@ pub async fn handle_generate(
                 let model_name_for_stream = mapped_model.clone();
                 let stream = async_stream::stream! {
                     let mut first_data = first_chunk;
-                    let mut telem_first_chunk_at: Option<std::time::Instant> = None;
                     let mut meta_sent = false;
+
                     loop {
                         // [NEW] 阶段 6.2: 补全 __cloudCodeMeta 响应元数据透传
                         // 官方 Worker 会将 TraceID 作为 SSE 流的第 0 个数据包下发
                         if !meta_sent {
-                            // [OPSEC R1] Replace real traceId with random hex to prevent
-                            // canary token feedback loop (server traceId → IDE → telemetry → different account)
-                            let fake_trace_id = format!("{:016x}", rand::random::<u64>());
-                            let meta_pkg = serde_json::json!({
-                                "__cloudCodeMeta": {
-                                    "traceId": fake_trace_id
-                                }
-                            });
-                            yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", serde_json::to_string(&meta_pkg).unwrap())));
+                            if let Some(tid) = &cloud_code_trace_id {
+                                let meta_pkg = serde_json::json!({
+                                    "__cloudCodeMeta": {
+                                        "traceId": tid
+                                    }
+                                });
+                                yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", serde_json::to_string(&meta_pkg).unwrap())));
+                            }
                             meta_sent = true;
                         }
 
@@ -396,7 +374,7 @@ pub async fn handle_generate(
                                 Ok(next_item) => next_item,
                                 Err(_) => {
                                     error!("[Gemini-SSE] Idle timeout after 300s, terminating stream");
-                                    None
+                                    None 
                                 }
                             }
                         };
@@ -426,7 +404,6 @@ pub async fn handle_generate(
                             None => break,
                         };
 
-                        // Track first chunk arrival time
                         debug!("[Gemini-SSE] Received chunk: {} bytes", bytes.len());
                         buffer.extend_from_slice(&bytes);
                         while let Some(pos) = buffer.iter().position(|&b| b == b'\n') {
@@ -494,33 +471,39 @@ pub async fn handle_generate(
                             }
                         }
                     }
-                    // [Telemetry v7] Native MITM Proxying handles telemetry now.
-                    // Synthetic proxy code removed.
                 };
 
                 if client_wants_stream {
                     let body = Body::from_stream(stream);
-                    // [OPSEC R6] Remove debug headers that leak account info to IDE clients
                     return Ok(Response::builder()
                         .header("Content-Type", "text/event-stream")
                         .header("Cache-Control", "no-cache")
                         .header("Connection", "keep-alive")
                         .header("X-Accel-Buffering", "no")
+                        .header("X-Account-Email", &email)
+                        .header("X-Mapped-Model", &mapped_model)
                         .body(body)
                         .unwrap()
                         .into_response());
                 } else {
                     // Collect to JSON
                     use crate::proxy::mappers::gemini::collector::collect_stream_to_json;
-                    match collect_stream_to_json(Box::pin(stream), &scoped_session_id).await {
+                    match collect_stream_to_json(Box::pin(stream), &s_id).await {
                         Ok(gemini_resp) => {
                             info!(
                                 "[{}] ✓ Stream collected and converted to JSON (Gemini)",
                                 session_id
                             );
                             let unwrapped = unwrap_response(&gemini_resp);
-                            // [OPSEC R6] Remove debug headers from JSON response
-                            return Ok((StatusCode::OK, Json(unwrapped)).into_response());
+                            return Ok((
+                                StatusCode::OK,
+                                [
+                                    ("X-Account-Email", email.as_str()),
+                                    ("X-Mapped-Model", mapped_model.as_str()),
+                                ],
+                                Json(unwrapped),
+                            )
+                                .into_response());
                         }
                         Err(e) => {
                             error!("Stream collection error: {}", e);
@@ -565,7 +548,7 @@ pub async fn handle_generate(
                                     part.get("thoughtSignature").and_then(|s| s.as_str())
                                 {
                                     crate::proxy::SignatureCache::global().cache_session_signature(
-                                        &scoped_session_id,
+                                        &session_id,
                                         sig.to_string(),
                                         1,
                                     );
@@ -578,8 +561,15 @@ pub async fn handle_generate(
             }
 
             let unwrapped = unwrap_response(&gemini_resp);
-            // [OPSEC R6] Remove debug headers from non-stream response
-            return Ok((StatusCode::OK, Json(unwrapped)).into_response());
+            return Ok((
+                StatusCode::OK,
+                [
+                    ("X-Account-Email", email.as_str()),
+                    ("X-Mapped-Model", mapped_model.as_str()),
+                ],
+                Json(unwrapped),
+            )
+                .into_response());
         }
 
         // 处理错误并重试
@@ -617,15 +607,7 @@ pub async fn handle_generate(
         let trace_id = format!("gemini_{}", session_id);
 
         // 执行退避
-        if apply_retry_strategy(
-            strategy.clone(),
-            attempt,
-            max_attempts,
-            status_code,
-            &trace_id,
-        )
-        .await
-        {
+        if apply_retry_strategy(strategy.clone(), attempt, max_attempts, status_code, &trace_id).await {
             // [NEW] Apply Client Adapter "let_it_crash" strategy
             if let Some(adapter) = &client_adapter {
                 if adapter.let_it_crash() && attempt > 0 {
@@ -638,17 +620,17 @@ pub async fn handle_generate(
             }
 
             // 判断是否需要轮换账号
-            // 判断是否需要轮换账号
-            let mut force_rotate = false;
-            if !should_rotate_account(status_code, Some(&strategy)) {
-                debug!(
+        // 判断是否需要轮换账号
+        let mut force_rotate = false;
+        if !should_rotate_account(status_code, Some(&strategy)) {
+            debug!(
                 "[{}] Keeping same account for status {} (Gemini server-side issue or Grace Retry)",
                 trace_id, status_code
             );
-                force_rotate = false;
-            } else {
-                force_rotate = true;
-            }
+            force_rotate = false;
+        } else {
+            force_rotate = true;
+        }
         }
 
         // [NEW] 处理 400 错误 (Thinking 签名失效)
@@ -687,7 +669,11 @@ pub async fn handle_generate(
         );
         return Ok((
             status,
-            // [FIX] Return JSON error — [OPSEC R6] No debug headers
+            [
+                ("X-Account-Email", email.as_str()),
+                ("X-Mapped-Model", mapped_model.as_str()),
+            ],
+            // [FIX] Return JSON error
             Json(json!({
                 "error": {
                     "code": status_code,
@@ -702,6 +688,7 @@ pub async fn handle_generate(
     if let Some(email) = last_email {
         Ok((
             StatusCode::TOO_MANY_REQUESTS,
+            [("X-Account-Email", email)],
             format!("All accounts exhausted. Last error: {}", last_error),
         )
             .into_response())

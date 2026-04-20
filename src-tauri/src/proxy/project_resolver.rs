@@ -3,89 +3,45 @@ use serde_json::Value;
 /// 使用 Antigravity 的 loadCodeAssist API 获取 project_id
 /// 这是获取 cloudaicompanionProject 的正确方式
 pub async fn fetch_project_id(access_token: &str) -> Result<String, String> {
-    // [OPSEC v4.1.32] Changed from Sandbox to Prod (original client NEVER hits sandbox)
-    let url = "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist";
-
-    // [OPSEC Fix] Canonical MITM confirms official client sends ANTIGRAVITY, not VSCODE
+    // 使用 Sandbox 环境，避免 Prod 环境的 429 错误
+    let url = "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:loadCodeAssist";
+    
     let request_body = serde_json::json!({
         "metadata": {
-            "ide_type": "ANTIGRAVITY",
-            "ide_version": "1.22.2",
-            "ide_name": "antigravity"
+            "ideType": "ANTIGRAVITY"
         }
     });
-
-    // [OPSEC v4.1.32] Use centralized google_api_headers() for consistent fingerprint
-    let headers = crate::utils::http::google_api_headers(access_token);
-    // [OPSEC V3] Use isolated per-call client instead of global shared singleton
-    // to avoid leaking multiple Bearer tokens over the same TCP/TLS connection pool.
-    let client = rquest::Client::builder()
-        .http1_only()
-        .timeout(std::time::Duration::from_secs(30))
-        .pool_max_idle_per_host(0)
-        .build()
-        .unwrap_or_else(|_| crate::utils::http::get_standard_client());
+    let client = crate::utils::http::get_client();
     let response = client
         .post(url)
-        .headers(headers)
-        .body(serde_json::to_vec(&request_body).unwrap_or_default())
+        .bearer_auth(access_token)
+        // .header("Host", "cloudcode-pa.googleapis.com") // 移除 Host header，因为已切换域名
+        .header("User-Agent", crate::constants::USER_AGENT.as_str())
+        .header("Content-Type", "application/json")
+        .header("Accept", "*/*")
+        .header("Accept-Encoding", "gzip, deflate, br")
+        .header("x-goog-api-client", "gl-node/22.21.1")
+        .json(&request_body)
         .send()
         .await
         .map_err(|e| format!("loadCodeAssist 请求失败: {}", e))?;
-
+    
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
         return Err(format!("loadCodeAssist 返回错误 {}: {}", status, body));
     }
-
-    let data: Value = response
-        .json()
+    
+    let data: Value = response.json()
         .await
         .map_err(|e| format!("解析响应失败: {}", e))?;
-
-    // [OPSEC] Wykonanie dyskretnego Onboardingu przy rozwiązywaniu zagubionego projektu
-    let tier_for_onboard = data
-        .get("currentTier")
-        .and_then(|t| t.get("id"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("free-tier")
-        .to_string();
-    let access_token_clone = access_token.to_string();
-
-    tokio::spawn(async move {
-        // [OPSEC Fix] Canonical MITM confirms ANTIGRAVITY metadata
-        let onboard_meta = serde_json::json!({
-            "tier_id": tier_for_onboard,
-            "metadata": {
-                "ide_type": "ANTIGRAVITY",
-                "ide_version": "1.22.2",
-                "ide_name": "antigravity"
-            }
-        });
-
-        // [OPSEC v4.1.32] Onboard also uses Prod + centralized headers
-        let onboard_headers = crate::utils::http::google_api_headers(&access_token_clone);
-        let client = crate::utils::http::get_standard_client();
-        let _ = client
-            .post("https://cloudcode-pa.googleapis.com/v1internal:onboardUser")
-            .headers(onboard_headers)
-            .body(serde_json::to_vec(&onboard_meta).unwrap_or_default())
-            .send()
-            .await;
-    });
-
+    
     // 提取 cloudaicompanionProject
-    if let Some(project_id) = data.get("cloudaicompanionProject").and_then(|v| v.as_str()) {
-        // [OPSEC] Zabezpieczenie przed błędem Macro-Linker / Identity Collisions
-        if project_id == "macro-linker-26f3p" || project_id == "681255809395" {
-            tracing::warn!("Zidentyfikowano wrogi projekt ({}). Odmawiam przypisania w celu ochrony konta Pro.", project_id);
-            return Err("Phantom project ID detected, enforcing individual routing.".to_string());
-        }
-
+    if let Some(project_id) = data.get("cloudaicompanionProject")
+        .and_then(|v| v.as_str()) {
         return Ok(project_id.to_string());
     }
-
+    
     // 如果没有返回 project_id，说明账号无资格，返回错误以触发 token_manager 的稳定兜底逻辑
     Err("账号无资格获取官方 cloudaicompanionProject".to_string())
 }
