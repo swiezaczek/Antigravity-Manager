@@ -2054,7 +2054,7 @@ fn is_model_compatible(cached: &str, target: &str) -> bool {
 mod tests {
     use super::*;
     use crate::proxy::common::json_schema::clean_json_schema;
-    use crate::proxy::config::{ThinkingBudgetConfig, update_thinking_budget_config};
+    use crate::proxy::config::ThinkingBudgetConfig;
 
     #[test]
     fn test_ephemeral_injection_debug() {

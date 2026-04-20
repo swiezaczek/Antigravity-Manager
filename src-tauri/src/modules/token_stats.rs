@@ -555,7 +555,6 @@ pub fn get_account_trend_daily(days: i64) -> Result<Vec<AccountTrendPoint>, Stri
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[test]
     fn test_record_and_query() {

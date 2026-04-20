@@ -769,9 +769,7 @@ fn enforce_uppercase_types(value: &mut Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proxy::mappers::openai::models::*;
 
-    #[test]
     #[test]
     fn test_issue_1592_gemini_3_pro_budget_capping() {
         // [FIX #1592] Regression test for gemini-3-pro thinking budget capping

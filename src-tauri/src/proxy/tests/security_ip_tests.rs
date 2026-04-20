@@ -11,7 +11,7 @@
 #[cfg(test)]
 mod security_db_tests {
     use crate::modules::security_db::{
-        self, IpAccessLog, IpBlacklistEntry, IpWhitelistEntry,
+        IpAccessLog,
         init_db, add_to_blacklist, remove_from_blacklist, get_blacklist,
         is_ip_in_blacklist, get_blacklist_entry_for_ip,
         add_to_whitelist, remove_from_whitelist, get_whitelist,
@@ -645,10 +645,8 @@ mod ip_filter_middleware_tests {
 
 #[cfg(test)]
 mod performance_benchmarks {
-    use super::security_db_tests::*;
     use crate::modules::security_db::{
         init_db, add_to_blacklist, is_ip_in_blacklist, get_blacklist,
-        clear_ip_access_logs,
     };
     use std::time::Instant;
 
