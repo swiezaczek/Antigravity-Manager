@@ -213,7 +213,7 @@ async fn handle_tunneled_request(
     // [OPSEC V15] Replace product identifiers in body, rather than dropping
     if !spoofed_body.is_empty() && path.contains("/v1internal") {
         let body_str = String::from_utf8_lossy(&spoofed_body);
-        if body_str.contains("antigravity") || body_str.contains("antigravity_desktop") {
+        if body_str.contains("antigravity") {
             let replaced = body_str.replace("antigravity_desktop", "vscode_desktop").replace("antigravity", "vscode");
             spoofed_body = replaced.into_bytes();
             tracing::info!("[MITM] ⚠️ Body contained product identifier — spoofed to vscode for {} {}", host, path);
@@ -233,7 +233,7 @@ async fn handle_tunneled_request(
     // This catches Clearcut payloads even if Go LS resolves to unmapped IP addresses.
     if !spoofed_body.is_empty() {
         let body_preview = String::from_utf8_lossy(&spoofed_body);
-        if body_preview.contains("antigravity") || body_preview.contains("antigravity_desktop") {
+        if body_preview.contains("antigravity") {
             tracing::warn!("[MITM] ⚠️ Body contains product identifier — force dropping: {} {}", host, path);
             let response = if path.contains("/log") || host.contains("play.googleapis.com") {
                 "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n".to_string()
