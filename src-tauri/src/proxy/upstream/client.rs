@@ -52,9 +52,9 @@ pub fn sanitize_error_for_log(error_text: &str) -> String {
     
     // 抹除 Bearer token
     let re_bearer = regex::Regex::new(r#"(?i)(bearer\s+)[^"'\\\s,}\]]+"#).unwrap();
-    let redacted_2 = re_bearer.replace_all(&redacted_1, "$1<redacted>");
+    let redacted_2 = re_bearer.replace_all(redacted_1.as_ref(), "$1<redacted>");
     
-    // é™ åˆ¶é•¿åº¦é˜²æ­¢æ—¥å¿—ç‚¸å¼¹
+    // 限制长度防止日志炸弹
     if redacted_2.len() > 1000 {
         format!("{}... (truncated)", &redacted_2[..1000])
     } else {

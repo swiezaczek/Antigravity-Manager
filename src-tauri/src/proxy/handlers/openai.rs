@@ -34,7 +34,7 @@ pub async fn handle_chat_completions(
     let model_name = body.get("model").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
     if model_name.contains("image") || model_name.contains("dall-e") || model_name.contains("midjourney") {
         tracing::info!("[ChatRedirection] Redirecting model {} to image generations", model_name);
-        return intercept_chat_to_image(state, body, &model_name).await;
+        return intercept_chat_to_image(state, body, &model_name.as_str()).await;
     }
 
     // [FIX] 保存原始请求体的完整副本，用于日志记录
