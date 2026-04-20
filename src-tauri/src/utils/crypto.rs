@@ -103,6 +103,7 @@ fn decrypt_string_internal(encrypted_base64: &str) -> Result<String, String> {
     String::from_utf8(plaintext).map_err(|e| format!("UTF-8 conversion failed: {}", e))
 }
 
+#[allow(dead_code)]
 pub fn decrypt_string(encrypted: &str) -> Result<String, String> {
     if encrypted.starts_with(ENCRYPTED_PREFIX) {
         decrypt_string_internal(&encrypted[ENCRYPTED_PREFIX.len()..])

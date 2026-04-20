@@ -77,6 +77,7 @@ const V1_INTERNAL_BASE_URL_FALLBACKS: [&str; 3] = [
 
 /// Deterministic FNV-1a based hash producing a 32-char hex string.
 /// Used as a stable machine-id surrogate when no DeviceProfile is available.
+#[allow(dead_code)]
 fn md5_like_hash(data: &[u8]) -> u128 {
     let mut hash: u128 = 0xcbf29ce484222325_u128.wrapping_mul(0x100000001b3);
     for &byte in data {

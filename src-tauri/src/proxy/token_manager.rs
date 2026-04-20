@@ -958,6 +958,7 @@ impl TokenManager {
     }
 
     /// P2C 算法的候选池大小 - 从前 N 个最优候选中随机选择
+#[allow(dead_code)]
     const P2C_POOL_SIZE: usize = 5;
 
     /// Power of 2 Choices (P2C) 选择算法
@@ -969,6 +970,7 @@ impl TokenManager {
     /// * `attempted` - 已尝试失败的账号 ID 集合
     /// * `normalized_target` - 归一化后的目标模型名
     /// * `quota_protection_enabled` - 是否启用配额保护
+#[allow(dead_code)]
     fn select_with_p2c<'a>(
         &self,
         candidates: &'a [ProxyToken],

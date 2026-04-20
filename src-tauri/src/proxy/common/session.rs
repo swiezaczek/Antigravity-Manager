@@ -16,6 +16,7 @@ pub fn derive_session_id(account_id: &str) -> String {
 /// This replaces the global SESSION_ID constant with per-account isolation,
 /// preventing cross-account correlation via `x-vscode-sessionid` header.
 /// Format matches the canonical UUID pattern used by VS Code/Cloud Code.
+#[allow(dead_code)]
 pub fn get_or_create_vscode_session_id(account_id: &str) -> String {
     // Deterministyczny UUID-like string z account_id (FNV-1a hash)
     let mut hash: u128 = 0x6c62272e07bb0142_u128.wrapping_mul(0x100000001b3);

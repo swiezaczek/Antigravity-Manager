@@ -2,32 +2,40 @@ use std::sync::LazyLock;
 use regex::Regex;
 
 /// URL to fetch the latest Antigravity version
+#[allow(dead_code)]
 const VERSION_URL: &str = "https://antigravity-auto-updater-974169037036.us-central1.run.app";
 
 /// Second fallback: Official Changelog page
+#[allow(dead_code)]
 const CHANGELOG_URL: &str = "https://antigravity.google/changelog";
 
 
 
 /// Known stable configuration (for Docker/Headless fallback)
 /// Antigravity 4.1.32 uses Electron 39.2.3 which corresponds to Chrome 132.0.6834.160
-const KNOWN_STABLE_VERSION: &str = "4.1.43";
+#[allow(dead_code)]
+const KNOWN_STABLE_VERSION: &str = "4.1.44";
+#[allow(dead_code)]
 const KNOWN_STABLE_ELECTRON: &str = "39.2.3";
+#[allow(dead_code)]
 const KNOWN_STABLE_CHROME: &str = "132.0.6834.160";
 
 /// Pre-compiled regex for version parsing (X.Y.Z pattern)
+#[allow(dead_code)]
 static VERSION_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\d+\.\d+\.\d+").expect("Invalid version regex")
 });
 
 /// Parse version from response text using pre-compiled regex
 /// Matches semver pattern: X.Y.Z (e.g., "1.15.8")
+#[allow(dead_code)]
 fn parse_version(text: &str) -> Option<String> {
     VERSION_REGEX.find(text).map(|m| m.as_str().to_string())
 }
 
 /// Compare two X.Y.Z semantic version strings.
 /// Returns Ordering::Greater if v1 > v2.
+#[allow(dead_code)]
 fn compare_semver(v1: &str, v2: &str) -> std::cmp::Ordering {
     let parse = |v: &str| -> Vec<u32> {
         v.split('.').filter_map(|s| s.parse().ok()).collect()
@@ -47,6 +55,7 @@ fn compare_semver(v1: &str, v2: &str) -> std::cmp::Ordering {
 
 /// Version source for logging
 #[derive(Debug, PartialEq)]
+#[allow(dead_code)]
 enum VersionSource {
     LocalInstallation,
     KnownStableFallback,
@@ -58,6 +67,7 @@ enum VersionSource {
 }
 
 /// Helper struct for version info
+#[allow(dead_code)]
 struct VersionConfig {
     version: String,
     electron: String,
@@ -67,6 +77,7 @@ struct VersionConfig {
 /// Try to fetch the latest Antigravity version from the remote update server.
 /// Runs in a dedicated OS thread to avoid blocking Tokio's async runtime.
 /// Returns None on any network/parse failure — always non-fatal, 5s timeout.
+#[allow(dead_code)]
 fn try_fetch_remote_version() -> Option<String> {
     // Spawn a dedicated OS thread so that `reqwest::blocking` never touches
     // the Tokio thread-pool and cannot trigger the "Cannot block the current
@@ -119,6 +130,7 @@ fn try_fetch_remote_version() -> Option<String> {
 ///   - The local Antigravity install is outdated, OR
 ///   - Local detection fails (Docker / headless / non-standard path),
 /// ...we always report a version >= the current minimum required by Google's API.
+#[allow(dead_code)]
 fn resolve_version_config() -> (VersionConfig, VersionSource) {
     // Floor: static known-stable value (updated with each release of this project)
     let mut best_version = KNOWN_STABLE_VERSION.to_string();
