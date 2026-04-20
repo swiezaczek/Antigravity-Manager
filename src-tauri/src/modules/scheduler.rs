@@ -52,6 +52,7 @@ pub fn check_cooldown(key: &str, cooldown_seconds: i64) -> bool {
 }
 
 pub fn start_scheduler(app_handle: Option<tauri::AppHandle>, proxy_state: crate::commands::proxy::ProxyServiceState) {
+    let proxy_state_for_token = proxy_state.clone();
     tauri::async_runtime::spawn(async move {
         logger::log_info("Smart Warmup Scheduler started. Monitoring quota at 100%...");
         
@@ -261,7 +262,6 @@ pub fn start_scheduler(app_handle: Option<tauri::AppHandle>, proxy_state: crate:
     });
 
     // [NEW] Proactive OAuth Token Refresh Scheduler
-    let proxy_state_for_token = proxy_state.clone();
     tauri::async_runtime::spawn(async move {
         logger::log_info("Proactive Token Refresh Scheduler started.");
 
@@ -269,7 +269,15 @@ pub fn start_scheduler(app_handle: Option<tauri::AppHandle>, proxy_state: crate:
         tokio::time::sleep(Duration::from_secs(10)).await;
 
         loop {
-            let token_manager = &proxy_state_for_token.token_manager;
+            let token_manager = {
+                let admin_lock = proxy_state_for_token.admin_server.read().await;
+                if let Some(admin) = admin_lock.as_ref() {
+                    admin.axum_server.token_manager.clone()
+                } else {
+                    tokio::time::sleep(Duration::from_secs(60)).await;
+                    continue;
+                }
+            };
             if token_manager.len() == 0 {
                 tokio::time::sleep(Duration::from_secs(60)).await;
                 continue;
@@ -285,9 +293,8 @@ pub fn start_scheduler(app_handle: Option<tauri::AppHandle>, proxy_state: crate:
             let mut next_wakeup: i64 = 3600; // Max sleep time (1 hour = token lifecycle)
 
             for acc in accounts {
-                if !acc.enabled { continue; }
-                
-                if let Ok(content) = std::fs::read_to_string(&acc.file_path) {
+
+                if let Ok(content) = std::fs::read_to_string(crate::modules::user_token_db::get_db_path().unwrap()) {
                     if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
                         if let Some(expiry) = json.get("token").and_then(|t| t.get("expiry_timestamp")).and_then(|e| e.as_i64()) {
                             let time_left = expiry - now;
@@ -306,7 +313,8 @@ pub fn start_scheduler(app_handle: Option<tauri::AppHandle>, proxy_state: crate:
                                         Ok(token_response) => {
                                             logger::log_info(&format!("[TokenRefresh] Successfully proactively refreshed token for {}", acc.email));
                                             let new_now = chrono::Utc::now().timestamp();
-                                            let _ = token_manager.save_refreshed_token_silent(&acc.id, &acc.file_path, &token_response, new_now).await;
+                                            let db_path = crate::modules::user_token_db::get_db_path().unwrap_or_default();
+                                            let _ = token_manager.save_refreshed_token_silent(&acc.id, &db_path, &token_response, new_now).await;
                                         }
                                         Err(e) => {
                                              logger::log_warn(&format!("[TokenRefresh] Proactive refresh failed for {}: {}", acc.email, e));

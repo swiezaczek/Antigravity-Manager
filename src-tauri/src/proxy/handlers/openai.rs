@@ -780,6 +780,7 @@ pub async fn handle_chat_completions(
 
     // 所有尝试均失败
     if let Some(email) = last_email {
+        let email_masked = mask_email(&email);
         Ok((
             StatusCode::TOO_MANY_REQUESTS,
             [("X-Account-Email", email_masked), ("X-Mapped-Model", mapped_model)],
@@ -1610,6 +1611,7 @@ pub async fn handle_completions(
 
     // 所有尝试均失败
     if let Some(email) = last_email {
+        let email_masked = mask_email(&email);
         (
             StatusCode::TOO_MANY_REQUESTS,
             [("X-Account-Email", email_masked), ("X-Mapped-Model", mapped_model)],

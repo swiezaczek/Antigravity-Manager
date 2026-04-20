@@ -27,7 +27,7 @@ static GHOST_CACHE: Lazy<RwLock<std::collections::HashMap<String, String>>> = La
 
 /// Start the MITM forward proxy on the given port.
 /// This function runs forever (until the tokio runtime shuts down).
-pub async fn start(ca: Arc<CertificateAuthority>, port: u16) -> Result<(), String> {
+pub async fn start(ca: Arc<CertificateAuthority>, port: u16, proxy_pool: Arc<crate::proxy::proxy_pool::ProxyPoolManager>, token_manager: Arc<crate::proxy::token_manager::TokenManager>) -> Result<(), String> {
     let listener = TcpListener::bind(format!("127.0.0.1:{}", port))
         .await
         .map_err(|e| format!("MITM bind failed on port {}: {}", port, e))?;
@@ -175,12 +175,13 @@ async fn handle_tunneled_request(
     let mut resolved_account_id: Option<String> = None;
     if host.contains("oauth2.googleapis.com") && path.contains("/token") && !body.is_empty() {
         if let Ok(body_str) = String::from_utf8(body.clone()) {
-            if let Ok(parsed) = serde_urlencoded::from_str::<std::collections::HashMap<String, String>>(&body_str) {
-                if let Some(refresh_token) = parsed.get("refresh_token") {
+            let parsed: std::collections::HashMap<String, String> = url::form_urlencoded::parse(body_str.as_bytes())
+                .into_owned()
+                .collect();
+            if let Some(refresh_token) = parsed.get("refresh_token") {
                     resolved_account_id = token_manager.get_account_id_by_refresh_token(refresh_token);
                     if resolved_account_id.is_some() {
                         tracing::debug!("[MITM] Air-Gap matched OAuth refresh to account: {:?}", resolved_account_id);
-                    }
                 }
             }
         }
@@ -250,7 +251,7 @@ async fn handle_tunneled_request(
         }
         rules::Action::RewriteAgentTelemetry => {
             tracing::debug!("[MITM] 📝 Rewriting Agent Telemetry for {}", path);
-            let (new_headers, new_body, account_id) = rewrite_agent_telemetry(headers, body);
+            let (new_headers, new_body, account_id) = rewrite_agent_telemetry(spoofed_headers, spoofed_body);
             
             // 6. Connect to real upstream server using ProxyPool mapped to the telemetry account
             let upstream_response =
@@ -338,20 +339,18 @@ fn spoof_headers(headers: Vec<String>, account_id: Option<&str>) -> Vec<String> 
         let h_lower = line.to_lowercase();
         if h_lower.starts_with("x-mac-machine-id:") || h_lower.starts_with("x-mac:") || h_lower.starts_with("x-machine-id:") {
             if let Some(dp) = &device_profile {
-                if let Some(mac) = &dp.mac_machine_id {
-                    let header_name = line.split(':').next().unwrap_or("x-mac-machine-id");
-                    new_headers.push(format!("{}: {}", header_name, mac));
-                    continue;
-                }
+                let mac = &dp.mac_machine_id;
+                let header_name = line.split(':').next().unwrap_or("x-mac-machine-id");
+                new_headers.push(format!("{}: {}", header_name, mac));
+                continue;
             }
             continue; // drop if no profile
         }
         if h_lower.starts_with("sqm-id:") {
             if let Some(dp) = &device_profile {
-                if let Some(sqm) = &dp.sqm_id {
-                    new_headers.push(format!("sqm-id: {}", sqm));
-                    continue;
-                }
+                let sqm = &dp.sqm_id;
+                new_headers.push(format!("sqm-id: {}", sqm));
+                continue;
             }
             continue; // drop if no profile
         }
@@ -386,7 +385,6 @@ fn spoof_headers(headers: Vec<String>, account_id: Option<&str>) -> Vec<String> 
             let spoofed = account_id.map(|id| uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, id.as_bytes()).to_string()).unwrap_or_else(|| uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, b"AntigravityLocalMachine").to_string());
             new_headers.push(format!("unleash-connection-id: {}", spoofed));
             continue;
-        }
         }
         if h_lower.starts_with("user-agent:") {
             if h_lower.contains("antigravity/") {
@@ -589,7 +587,7 @@ async fn forward_to_upstream_with_proxy(
     if path.contains("loadCodeAssist") || path.contains("onboardUser") || path.contains("fetchAvailableModels") || path.contains("fetchUserInfo") || path.contains("cascadeNuxes") {
         if let Ok(mut json_val) = serde_json::from_slice::<serde_json::Value>(&body_bytes) {
             
-            fn spoof_response_data(v: &mut serde_json::Value) {
+            fn spoof_response_data(v: &mut serde_json::Value, account_id: Option<&str>) {
                 if let Some(obj) = v.as_object_mut() {
                     // 1. Spoof PII
                     if obj.contains_key("email") {
@@ -641,7 +639,7 @@ async fn forward_to_upstream_with_proxy(
         } else {
             // Fallback to strict regex if JSON parsing somehow fails for loadCodeAssist legacy upgrades
             let body_str = String::from_utf8_lossy(&body_bytes);
-            let scrubbed = regex::Regex::new(r"Email=[^&\"]+")
+            let scrubbed = regex::Regex::new(r#"Email=[^&"]+"#)
                 .map(|re| re.replace_all(&body_str, "Email=user%40example.com").to_string())
                 .unwrap_or_else(|_| body_str.to_string());
             final_body = scrubbed.into_bytes();
@@ -841,6 +839,7 @@ fn rewrite_agent_telemetry(mut headers: Vec<String>, body: Vec<u8>) -> (Vec<Stri
                         *h = format!("Content-Length: {}", new_body.len());
                     }
                 }
+            }
             return (headers, new_body, Some(proxy_token.account_id.clone()));
         } else {
             tracing::debug!("[MITM] Unmapped trajectoryId: {}", uuid);

@@ -376,7 +376,7 @@ async fn exchange_code_once(
         .pool_idle_timeout(Some(std::time::Duration::from_millis(1)))
         .pool_max_idle_per_host(0)
         .build()
-        .unwrap_or_else(|_| crate::utils::http::get_long_standard_client());
+        .unwrap(); // [OPSEC] We do not fallback here because get_long_standard_client returns rquest::Client
     
     let params = [
         ("client_id", client_cfg.client_id.as_str()),
