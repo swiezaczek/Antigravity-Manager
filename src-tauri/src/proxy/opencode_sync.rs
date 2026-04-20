@@ -19,7 +19,8 @@ const ANTIGRAVITY_ACCOUNTS_FILE: &str = "antigravity-accounts.json";
 const BACKUP_SUFFIX: &str = ".antigravity-manager.bak";
 const OLD_BACKUP_SUFFIX: &str = ".antigravity.bak";
 
-const ANTIGRAVITY_PROVIDER_ID: &str = "antigravity-manager";
+// [OPSEC V18] Forensic provider ID anonymization
+const ANTIGRAVITY_PROVIDER_ID: &str = "local-dev-proxy";
 
 /// Variant type for model variants
 #[derive(Debug, Clone, Copy)]

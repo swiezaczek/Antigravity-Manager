@@ -1897,7 +1897,8 @@ pub async fn refresh_all_quotas_logic() -> Result<RefreshStats, String> {
                 let _guard = permit.acquire().await.unwrap();
                 if idx > 0 {
                     use rand::Rng;
-                    let delay = rand::thread_rng().gen_range(30..=120);
+                    // [OPSEC V16] Jitter delay to prevent temporal clustering of requests
+                    let delay = rand::thread_rng().gen_range(2..=8);
                     crate::modules::logger::log_info(&format!("  - Waiting {}s before processing {} (Zero-Emission Jitter)", delay, email));
                     tokio::time::sleep(tokio::time::Duration::from_secs(delay)).await;
                 }

@@ -8,7 +8,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
-const DATA_DIR: &str = ".antigravity_tools";
+// [OPSEC V19] Forensic path anonymization
+const DATA_DIR: &str = ".dev_proxy_cache";
 const GLOBAL_BASELINE: &str = "device_original.json";
 
 fn get_data_dir() -> Result<PathBuf, String> {

@@ -219,6 +219,23 @@ async fn handle_tunneled_request(
         }
     }
 
+    // [OPSEC V14] Safety net: drop any protobuf/unknown traffic that contains product identifiers
+    // This catches Clearcut payloads even if Go LS resolves to unmapped IP addresses.
+    if !spoofed_body.is_empty() {
+        let body_preview = String::from_utf8_lossy(&spoofed_body);
+        if body_preview.contains("antigravity") || body_preview.contains("antigravity_desktop") {
+            tracing::warn!("[MITM] ⚠️ Body contains product identifier — force dropping: {} {}", host, path);
+            let response = if path.contains("/log") || host.contains("play.googleapis.com") {
+                "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n".to_string()
+            } else {
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=UTF-8\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\n{}".to_string()
+            };
+            tls_stream.write_all(response.as_bytes()).await?;
+            tls_stream.flush().await?;
+            return Ok(keep_alive);
+        }
+    }
+
     // 5. Apply rules
     let action = rules::evaluate(host, path);
 
@@ -228,8 +245,12 @@ async fn handle_tunneled_request(
                 "[MITM] ✗ Dropped: {} {} {} ({} bytes)",
                 method, host, path, content_length
             );
-            // Send fake 200 OK with empty JSON body
-            let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=UTF-8\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\n{}";
+            // Send fake 200 OK (empty Protobuf for Clearcut, else empty JSON)
+            let response = if path.contains("/log") || host.contains("play.googleapis.com") {
+                "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n".to_string()
+            } else {
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=UTF-8\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\n{}".to_string()
+            };
             tls_stream.write_all(response.as_bytes()).await?;
             tls_stream.flush().await?;
             Ok(keep_alive)
@@ -388,10 +409,10 @@ fn spoof_headers(headers: Vec<String>, account_id: Option<&str>) -> Vec<String> 
         }
         if h_lower.starts_with("user-agent:") {
             if h_lower.contains("antigravity/") {
-                // [OPSEC v4.1.33] Wektor Chimeryczny: Zamiast na ślepo wymuszać Node.js,
-                // inteligentnie podmieniamy nazwę klienta na `cloudcode`.
-                // Dzięki temu `Go LS` pozostaje Go LS, a `Node.js` pozostaje Node.js!
-                let spoofed = line.replace("antigravity", "cloudcode").replace("ANTIGRAVITY", "cloudcode");
+                // [OPSEC V12] Case-insensitive User-Agent spoofing
+                // Prevents leakage if the IDE sends "Antigravity/1.0" or "ANTIGRAVITY"
+                static RE: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| regex::Regex::new(r"(?i)antigravity").unwrap());
+                let spoofed = RE.replace_all(&line, "cloudcode").into_owned();
                 new_headers.push(spoofed);
                 continue;
             }
@@ -433,27 +454,35 @@ fn spoof_unleash_body(host: &str, path: &str, body: Vec<u8>, account_id: Option<
                 obj.insert("connectionId".to_string(), serde_json::Value::String(spoofed_conn_id));
             }
 
-            // [OPSEC 7.3] Randomize 'started' timestamp to prevent process-level fingerprinting
+            // [OPSEC V10] Per-account deterministic offset covers ±8 hours
+            // This gives each account a stable, widely-spaced "process start time"
+            // instead of ±5min random jitter that clusters around real system clock.
             if obj.contains_key("started") {
+                let acct_seed = account_id.unwrap_or("default");
+                let acct_hash = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_DNS, acct_seed.as_bytes());
+                let offset_secs = (acct_hash.as_bytes()[0] as i64 * 225) - 28800; // ±8 hours, deterministic per account
                 use rand::Rng;
-                let jitter_secs = rand::thread_rng().gen_range(-300..300i64);
-                let now = chrono::Local::now() + chrono::Duration::seconds(jitter_secs);
-                obj.insert("started".to_string(), serde_json::Value::String(now.to_rfc3339_opts(chrono::SecondsFormat::Nanos, false)));
+                let noise = rand::thread_rng().gen_range(-60..60i64);
+                let spoofed_time = chrono::Local::now() + chrono::Duration::seconds(offset_secs + noise);
+                obj.insert("started".to_string(), serde_json::Value::String(spoofed_time.to_rfc3339_opts(chrono::SecondsFormat::Nanos, false)));
             }
 
             // [OPSEC 7.3] Also randomize bucket.start/stop timestamps in metrics
             if let Some(bucket) = obj.get_mut("bucket").and_then(|b| b.as_object_mut()) {
+                let acct_seed = account_id.unwrap_or("default");
+                let acct_hash = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_DNS, acct_seed.as_bytes());
+                let offset_secs = (acct_hash.as_bytes()[1] as i64 * 225) - 28800;
                 use rand::Rng;
-                let jitter_secs = rand::thread_rng().gen_range(-300..300i64);
-                let now = chrono::Local::now() + chrono::Duration::seconds(jitter_secs);
+                let noise = rand::thread_rng().gen_range(-60..60i64);
+                let spoofed_time = chrono::Local::now() + chrono::Duration::seconds(offset_secs + noise);
                 if bucket.contains_key("start") {
                     bucket.insert("start".to_string(), serde_json::Value::String(
-                        (now - chrono::Duration::seconds(60)).to_rfc3339_opts(chrono::SecondsFormat::Nanos, false)
+                        (spoofed_time - chrono::Duration::seconds(60)).to_rfc3339_opts(chrono::SecondsFormat::Nanos, false)
                     ));
                 }
                 if bucket.contains_key("stop") {
                     bucket.insert("stop".to_string(), serde_json::Value::String(
-                        now.to_rfc3339_opts(chrono::SecondsFormat::Nanos, false)
+                        spoofed_time.to_rfc3339_opts(chrono::SecondsFormat::Nanos, false)
                     ));
                 }
             }
@@ -596,7 +625,8 @@ async fn forward_to_upstream_with_proxy(
                         let mut hasher = Sha256::new();
                         hasher.update(acct_hash.as_bytes());
                         let result = format!("{:x}", hasher.finalize());
-                        let fake_email = format!("dev.eng.{}@gmail.com", &result[0..6]);
+                        // [OPSEC V20] Use generic internal testing domain to avoid gmail correlation
+                        let fake_email = format!("user.{}@local.dev", &result[0..6]);
                         obj.insert("email".to_string(), serde_json::json!(fake_email));
                     }
                     if obj.contains_key("fullName") {
@@ -805,10 +835,16 @@ fn rewrite_agent_telemetry(mut headers: Vec<String>, body: Vec<u8>) -> (Vec<Stri
                     for key in latency_keys.iter() {
                         if let Some(val) = obj.get_mut(*key) {
                             if let Some(num) = val.as_u64() {
-                                // If latency is suspiciously high (> 1500ms), clamp it to a natural realistic value
+                                // [OPSEC V22] If latency is suspiciously high (>1500ms), replace with
+                                // log-normal distribution (median ~600ms) instead of uniform random
+                                // to match natural API latency curves and avoid bimodal distribution.
                                 if num > 1500 {
                                     use rand::Rng;
-                                    let realistic_ms = rand::thread_rng().gen_range(300..1200u64);
+                                    let u: f64 = rand::thread_rng().gen_range(0.001..0.999_f64);
+                                    // Box-Muller for log-normal: mu=6.4 (~600ms median), sigma=0.4
+                                    let z = (-2.0 * (1.0 - u).ln()).sqrt() * (2.0 * std::f64::consts::PI * u).cos();
+                                    let log_normal = (6.4 + 0.4 * z).exp();
+                                    let realistic_ms = (log_normal as u64).clamp(200, 1400);
                                     *val = serde_json::json!(realistic_ms);
                                     tracing::debug!("[MITM] Spoofed suspected high latency {} from {} to {}", key, num, realistic_ms);
                                 }

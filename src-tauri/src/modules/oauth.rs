@@ -369,14 +369,14 @@ async fn exchange_code_once(
     redirect_uri: &str,
     client_cfg: &OAuthClientConfig,
 ) -> Result<TokenResponse, (Option<reqwest::StatusCode>, String)> {
-    // [OPSEC] Wektor 5.3: Ensure single-use isolated TCP connection for OAuth to prevent cross-account IP correlation
-    let client = reqwest::Client::builder()
+    // [OPSEC V15] Unified TLS stack: use rquest (BoringSSL) for consistent JA3 fingerprint
+    // across all Google-facing traffic. Previously used reqwest which has a different TLS fingerprint.
+    let client = rquest::Client::builder()
         .http1_only() // [OPSEC Phase 13] Force HTTP/1.1 for auth callbacks to strictly simulate the internal gaxios Node.js mechanism
         .timeout(std::time::Duration::from_secs(60))
-        .pool_idle_timeout(Some(std::time::Duration::from_millis(1)))
-        .pool_max_idle_per_host(0)
+        .pool_max_idle_per_host(0) // Single-use connection
         .build()
-        .unwrap(); // [OPSEC] We do not fallback here because get_long_standard_client returns rquest::Client
+        .unwrap_or_else(|_| rquest::Client::builder().http1_only().build().expect("critical: oauth client build failed"));
     
     let params = [
         ("client_id", client_cfg.client_id.as_str()),
@@ -391,14 +391,15 @@ async fn exchange_code_once(
     );
 
     let mut headers = crate::utils::http::google_oauth_headers();
-    headers.insert(reqwest::header::CONNECTION, reqwest::header::HeaderValue::from_static("close"));
+    headers.insert(rquest::header::CONNECTION, rquest::header::HeaderValue::from_static("close"));
+
+    // [OPSEC V6] Pre-compute URL-encoded body (Serializer is not Send, must not span .await)
+    let encoded_body = url::form_urlencoded::Serializer::new(String::new()).extend_pairs(params.iter()).finish();
 
     let response = client
         .post(TOKEN_URL)
         .headers(headers)
-        // [OPSEC 7.11] Use .body() instead of .form() to prevent reqwest from overwriting
-        // our Content-Type header (which includes ;charset=UTF-8 matching native gaxios)
-        .body(params.iter().map(|(k, v)| format!("{}={}", k, v)).collect::<Vec<_>>().join("&"))
+        .body(encoded_body)
         .send()
         .await
         .map_err(|e| {
@@ -545,11 +546,13 @@ async fn refresh_access_token_once(
         crate::constants::NATIVE_OAUTH_USER_AGENT.as_str()
     );
 
+    // [OPSEC V6] Pre-compute URL-encoded body (Serializer is not Send, must not span .await)
+    let encoded_body = url::form_urlencoded::Serializer::new(String::new()).extend_pairs(params.iter()).finish();
+
     let response = client
         .post(TOKEN_URL)
         .headers(crate::utils::http::google_oauth_headers())
-        // [OPSEC 7.11] Use .body() to preserve Content-Type with charset=UTF-8
-        .body(params.iter().map(|(k, v)| format!("{}={}", k, v)).collect::<Vec<_>>().join("&"))
+        .body(encoded_body)
         .send()
         .await
         .map_err(|e| {
@@ -666,11 +669,13 @@ pub async fn revoke_token(token: &str) -> Result<(), String> {
         ("token", token),
     ];
     
+    // [OPSEC V6] Pre-compute URL-encoded body (Serializer is not Send)
+    let revoke_body = url::form_urlencoded::Serializer::new(String::new()).extend_pairs(params.iter()).finish();
+    
     let response = isolated_client
         .post("https://oauth2.googleapis.com/revoke")
         .headers(crate::utils::http::google_oauth_headers())
-        // [OPSEC 7.11] Use .body() to preserve Content-Type with charset=UTF-8
-        .body(params.iter().map(|(k, v)| format!("{}={}", k, v)).collect::<Vec<_>>().join("&"))
+        .body(revoke_body)
         .send()
         .await
         .map_err(|e| format!("Token revoke request failed: {}", e))?;

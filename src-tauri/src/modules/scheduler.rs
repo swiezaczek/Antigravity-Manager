@@ -215,8 +215,13 @@ pub fn start_scheduler(app_handle: Option<tauri::AppHandle>, proxy_state: crate:
                         }
                         
                         if task_idx < total - 1 {
-                            use rand::Rng;
-                            let delay = rand::thread_rng().gen_range(min_j..=max_j);
+                            // [OPSEC V11] Send-safe jitter with enforced minimum 10s between warmup requests
+                            let delay = {
+                                use rand::Rng;
+                                let effective_min = std::cmp::max(10, min_j);
+                                let effective_max = std::cmp::max(effective_min, max_j);
+                                rand::thread_rng().gen_range(effective_min..=effective_max)
+                            };
                             logger::log_info(&format!("[Scheduler] Jitter delay: {}s before next request (organic mimicry)...", delay));
                             tokio::time::sleep(tokio::time::Duration::from_secs(delay)).await;
                         }
@@ -298,15 +303,22 @@ pub fn start_scheduler(app_handle: Option<tauri::AppHandle>, proxy_state: crate:
                     if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
                         if let Some(expiry) = json.get("token").and_then(|t| t.get("expiry_timestamp")).and_then(|e| e.as_i64()) {
                             let time_left = expiry - now;
-                            use rand::Rng;
-                            let random_refresh_boundary: i64 = rand::thread_rng().gen_range(180..600); // 3 do 10 min
+                            // [OPSEC] Randomize refresh boundary (3-10 min) — Send-safe via timestamp entropy
+                            let random_refresh_boundary: i64 = {
+                                let seed = (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().subsec_nanos() as i64) % 420 + 180;
+                                seed // 180..600
+                            };
                             
                             if time_left > 0 && time_left <= random_refresh_boundary {
                                 logger::log_info(&format!("[TokenRefresh] Proactively refreshing token for {} (Expires in {}s)", acc.email, time_left));
                                 
-                                // [OPSEC] Wektor 5.4: Add 2-15s inter-account jitter before refreshing to break up cron-bursts
-                                let jitter_ms = rand::thread_rng().gen_range(2000..15000);
-                                tokio::time::sleep(tokio::time::Duration::from_millis(jitter_ms)).await;
+                                // [OPSEC V7] Inter-account jitter: 15-90s to prevent temporal clustering
+                                // that allows Google to correlate multiple refresh bursts from one origin.
+                                let jitter_secs: u64 = {
+                                    let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().subsec_nanos() as u64;
+                                    (seed % 75) + 15 // 15..90
+                                };
+                                tokio::time::sleep(tokio::time::Duration::from_secs(jitter_secs)).await;
 
                                 if let Some(refresh_token) = json.get("token").and_then(|t| t.get("refresh_token")).and_then(|e| e.as_str()) {
                                     match crate::modules::oauth::refresh_access_token(refresh_token, Some(&acc.id)).await {

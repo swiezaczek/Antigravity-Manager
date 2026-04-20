@@ -29,8 +29,8 @@ fn build_ca_params() -> CertificateParams {
     let mut params = CertificateParams::default();
     params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
     let mut dn = DistinguishedName::new();
-    dn.push(DnType::CommonName, "Antigravity MITM CA");
-    dn.push(DnType::OrganizationName, "Antigravity Manager");
+    dn.push(DnType::CommonName, "Development Proxy CA");
+    dn.push(DnType::OrganizationName, "Local Development");
     params.distinguished_name = dn;
     params.not_before = rcgen::date_time_ymd(2024, 1, 1);
     params.not_after = rcgen::date_time_ymd(2034, 12, 31);
@@ -229,14 +229,14 @@ impl CertificateAuthority {
 fn get_ca_dir() -> PathBuf {
     dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("antigravity-manager")
+        .join("dev-proxy")
         .join("mitm")
 }
 
 /// Get paths for CA cert and key files.
 fn get_ca_paths() -> (PathBuf, PathBuf) {
     let dir = get_ca_dir();
-    (dir.join("mitm-ca-v2.pem"), dir.join("mitm-ca-key-v2.pem"))
+    (dir.join("mitm-ca-v3.pem"), dir.join("mitm-ca-key-v3.pem"))
 }
 
 /// Get the CA cert path as a String (for env vars).

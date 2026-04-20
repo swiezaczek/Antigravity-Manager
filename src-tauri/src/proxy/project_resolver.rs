@@ -17,7 +17,14 @@ pub async fn fetch_project_id(access_token: &str) -> Result<String, String> {
     
     // [OPSEC v4.1.32] Use centralized google_api_headers() for consistent fingerprint
     let headers = crate::utils::http::google_api_headers(access_token);
-    let client = crate::utils::http::get_standard_client();
+    // [OPSEC V3] Use isolated per-call client instead of global shared singleton
+    // to avoid leaking multiple Bearer tokens over the same TCP/TLS connection pool.
+    let client = rquest::Client::builder()
+        .http1_only()
+        .timeout(std::time::Duration::from_secs(30))
+        .pool_max_idle_per_host(0)
+        .build()
+        .unwrap_or_else(|_| crate::utils::http::get_standard_client());
     let response = client
         .post(url)
         .headers(headers)
