@@ -63,6 +63,18 @@ jobs:
         with:
           workspaces: "src-tauri"
 
+      - name: Node.js setup
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+
+      - name: Install frontend dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: Build frontend
+        run: npm run build
+
       - name: Check Rust formatting
         run: |
           cd src-tauri

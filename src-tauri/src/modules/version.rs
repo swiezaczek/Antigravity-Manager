@@ -60,6 +60,7 @@ pub fn get_antigravity_version() -> Result<AntigravityVersion, String> {
 #[cfg(target_os = "macos")]
 fn get_version_macos(exe_path: &std::path::Path) -> Result<AntigravityVersion, String> {
     use plist::Value;
+    use std::path::PathBuf;
 
     // exe_path 可能是 /Applications/Antigravity.app 或内部可执行文件
     // 需要找到 .app 目录
@@ -67,7 +68,7 @@ fn get_version_macos(exe_path: &std::path::Path) -> Result<AntigravityVersion, S
     let app_path = if let Some(idx) = path_str.find(".app") {
         PathBuf::from(&path_str[..idx + 4])
     } else {
-        exe_path.clone()
+        exe_path.to_path_buf()
     };
 
     let info_plist_path = app_path.join("Contents/Info.plist");
