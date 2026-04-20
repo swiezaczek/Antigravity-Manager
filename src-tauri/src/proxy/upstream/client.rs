@@ -49,11 +49,11 @@ pub fn sanitize_error_for_log(error_text: &str) -> String {
     // 抹除常见敏感 key 的值
     let re = regex::Regex::new(r#"(?i)(access_token|refresh_token|id_token|authorization|api_key|secret|password|proxy_url|http_proxy|https_proxy)\s*[:=]\s*[^"'\\\s,}\]]+"#).unwrap();
     let redacted_1 = re.replace_all(error_text, "$1=<redacted>");
-    
+
     // 抹除 Bearer token
     let re_bearer = regex::Regex::new(r#"(?i)(bearer\s+)[^"'\\\s,}\]]+"#).unwrap();
     let redacted_2 = re_bearer.replace_all(redacted_1.as_ref(), "$1<redacted>");
-    
+
     // 限制长度防止日志炸弹
     if redacted_2.len() > 1000 {
         format!("{}... (truncated)", &redacted_2[..1000])
@@ -275,7 +275,8 @@ impl UpstreamClient {
         access_token: &str,
         body: Value,
         query_string: Option<&str>,
-        account_id: Option<&str>, device_profile: Option<crate::models::account::DeviceProfile>,
+        account_id: Option<&str>,
+        device_profile: Option<crate::models::account::DeviceProfile>,
     ) -> Result<UpstreamCallResult, String> {
         self.call_v1_internal_with_headers(
             method,
@@ -298,7 +299,8 @@ impl UpstreamClient {
         body: Value,
         query_string: Option<&str>,
         extra_headers: std::collections::HashMap<String, String>,
-        account_id: Option<&str>, _device_profile: Option<crate::models::account::DeviceProfile>,
+        account_id: Option<&str>,
+        _device_profile: Option<crate::models::account::DeviceProfile>,
     ) -> Result<UpstreamCallResult, String> {
         // [NEW] Get client based on account (cached in proxy pool manager)
         let client = self.get_client(account_id).await;
@@ -328,10 +330,7 @@ impl UpstreamClient {
         // accept: */* and accept-encoding: gzip, deflate, br on ALL v1internal requests.
         // It does NOT send: x-client-name, x-client-version, x-machine-id, sqm-id,
         // x-vscode-sessionid. Those are LS-layer headers handled by MITM forward_proxy.
-        headers.insert(
-            header::ACCEPT,
-            header::HeaderValue::from_static("*/*"),
-        );
+        headers.insert(header::ACCEPT, header::HeaderValue::from_static("*/*"));
         headers.insert(
             header::ACCEPT_ENCODING,
             header::HeaderValue::from_static("gzip, deflate, br"),
@@ -384,9 +383,9 @@ impl UpstreamClient {
                 .headers(headers.clone())
                 // [NEW] å¼ºåˆ¶åˆ†å—ä¼ è¾“ä»¿çœŸ: åŒ…è£…ä¸ºæµä»¥è§¦å‘ Transfer-Encoding: chunked
                 // è¿™å¯¹é½äº†å®˜æ–¹ Go Worker é€šè¿‡é®è”½ Content-Length æ¥æ¨¡æ‹Ÿ IDE æµé‡çš„è¡Œä¸º
-                .body(rquest::Body::wrap_stream(futures::stream::once(async move { 
-                    Ok::<_, std::io::Error>(body_bytes) 
-                })))
+                .body(rquest::Body::wrap_stream(futures::stream::once(
+                    async move { Ok::<_, std::io::Error>(body_bytes) },
+                )))
                 .send()
                 .await;
 

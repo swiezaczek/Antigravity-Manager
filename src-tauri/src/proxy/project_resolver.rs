@@ -5,7 +5,7 @@ use serde_json::Value;
 pub async fn fetch_project_id(access_token: &str) -> Result<String, String> {
     // 使用 Sandbox 环境，避免 Prod 环境的 429 错误
     let url = "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:loadCodeAssist";
-    
+
     let request_body = serde_json::json!({
         "metadata": {
             "ideType": "ANTIGRAVITY"
@@ -25,23 +25,23 @@ pub async fn fetch_project_id(access_token: &str) -> Result<String, String> {
         .send()
         .await
         .map_err(|e| format!("loadCodeAssist 请求失败: {}", e))?;
-    
+
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
         return Err(format!("loadCodeAssist 返回错误 {}: {}", status, body));
     }
-    
-    let data: Value = response.json()
+
+    let data: Value = response
+        .json()
         .await
         .map_err(|e| format!("解析响应失败: {}", e))?;
-    
+
     // 提取 cloudaicompanionProject
-    if let Some(project_id) = data.get("cloudaicompanionProject")
-        .and_then(|v| v.as_str()) {
+    if let Some(project_id) = data.get("cloudaicompanionProject").and_then(|v| v.as_str()) {
         return Ok(project_id.to_string());
     }
-    
+
     // 如果没有返回 project_id，说明账号无资格，返回错误以触发 token_manager 的稳定兜底逻辑
     Err("账号无资格获取官方 cloudaicompanionProject".to_string())
 }

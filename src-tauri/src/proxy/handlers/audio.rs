@@ -123,7 +123,10 @@ pub async fn handle_audio_transcription(
             wrapped_body,
             None,
             Some(account_id.as_str()),
-            token_manager.get_token_by_id(&account_id).as_ref().and_then(|t| t.device_profile.clone()),
+            token_manager
+                .get_token_by_id(&account_id)
+                .as_ref()
+                .and_then(|t| t.device_profile.clone()),
         )
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, format!("上游请求失败: {}", e)))?

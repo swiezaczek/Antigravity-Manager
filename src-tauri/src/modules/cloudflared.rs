@@ -8,8 +8,6 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 #[cfg(target_os = "windows")]
-
-
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 #[cfg(target_os = "windows")]
@@ -120,7 +118,7 @@ impl CloudflaredManager {
         cmd.arg("--version");
         #[cfg(target_os = "windows")]
         cmd.creation_flags(CREATE_NO_WINDOW);
-        
+
         match cmd.output().await {
             Ok(output) => {
                 if output.status.success() {
@@ -164,7 +162,10 @@ impl CloudflaredManager {
             .map_err(|e| format!("Download failed: {}", e))?;
 
         if !response.status().is_success() {
-            return Err(format!("Download failed with status: {}", response.status()));
+            return Err(format!(
+                "Download failed with status: {}",
+                response.status()
+            ));
         }
 
         let bytes = response
@@ -208,9 +209,13 @@ impl CloudflaredManager {
         self.update_status(|s| {
             s.installed = installed;
             s.version = version.clone();
-        }).await;
+        })
+        .await;
 
-        info!("[cloudflared] Installed successfully, version: {:?}", version);
+        info!(
+            "[cloudflared] Installed successfully, version: {:?}",
+            version
+        );
         Ok(self.get_status().await)
     }
 
@@ -238,7 +243,7 @@ impl CloudflaredManager {
         info!("[cloudflared] Starting tunnel to: {}", local_url);
 
         let mut cmd = Command::new(&self.bin_path);
-        
+
         // 设置工作目录
         // 设置工作目录
         if let Some(bin_dir) = self.bin_path.parent() {
@@ -248,39 +253,34 @@ impl CloudflaredManager {
 
         match config.mode {
             TunnelMode::Quick => {
-                cmd.arg("tunnel")
-                    .arg("--url")
-                    .arg(&local_url);
-                
+                cmd.arg("tunnel").arg("--url").arg(&local_url);
+
                 // 注意：--no-autoupdate 参数在较新版本的 cloudflared 中已不被支持，会导致进程立即退出
                 // cmd.arg("--no-autoupdate");
 
                 if config.use_http2 {
                     cmd.arg("--protocol").arg("http2");
                 }
-                
+
                 // 注意：--loglevel 参数在此上下文中也会导致 Incorrect Usage 错误，故移除以使用默认值
                 // cmd.arg("--loglevel").arg("info");
-                
+
                 info!("[cloudflared] Command args: tunnel --url {} ...", local_url);
             }
             TunnelMode::Auth => {
                 if let Some(token) = &config.token {
-                    cmd.arg("tunnel")
-                        .arg("run")
-                        .arg("--token")
-                        .arg(token);
-                    
+                    cmd.arg("tunnel").arg("run").arg("--token").arg(token);
+
                     // 注意：--no-autoupdate 参数不被支持
                     // cmd.arg("--no-autoupdate");
-                    
+
                     if config.use_http2 {
                         cmd.arg("--protocol").arg("http2");
                     }
-                    
+
                     // 注意：--loglevel 参数不被支持
                     // cmd.arg("--loglevel").arg("info");
-                    
+
                     info!("[cloudflared] Command args: tunnel run --token [HIDDEN] ...");
                 } else {
                     return Err("Token required for auth mode".to_string());
@@ -290,7 +290,7 @@ impl CloudflaredManager {
 
         // 恢复管道
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-        
+
         // 使用 DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP 隐藏窗口
         #[cfg(target_os = "windows")]
         cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
@@ -315,7 +315,8 @@ impl CloudflaredManager {
             s.version = version.clone();
             s.running = true;
             s.error = None;
-        }).await;
+        })
+        .await;
 
         // 启动进程监控任务
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
@@ -391,7 +392,8 @@ impl CloudflaredManager {
             s.running = false;
             s.url = None;
             s.error = None;
-        }).await;
+        })
+        .await;
 
         Ok(self.get_status().await)
     }
@@ -442,12 +444,13 @@ where
 /// 2. 命名隧道：从 ingress 配置中解析 hostname
 fn extract_tunnel_url(line: &str) -> Option<String> {
     // 快速隧道模式：直接查找 trycloudflare.com URL
-    if let Some(url) = line.split_whitespace()
+    if let Some(url) = line
+        .split_whitespace()
         .find(|s| s.starts_with("https://") && s.contains(".trycloudflare.com"))
     {
         return Some(url.to_string());
     }
-    
+
     // 命名隧道模式：从 "Updated to new configuration" 日志中解析 hostname
     // 日志格式示例：Updated to new configuration config="{\"ingress\":[{\"hostname\":\"api.example.com\", ...}]}"
     if line.contains("Updated to new configuration") && line.contains("ingress") {
@@ -462,7 +465,6 @@ fn extract_tunnel_url(line: &str) -> Option<String> {
             }
         }
     }
-    
+
     None
 }
-

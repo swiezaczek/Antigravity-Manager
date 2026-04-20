@@ -1,14 +1,14 @@
-use crate::modules::{process, db, device};
 use crate::models::Account;
+use crate::modules::{db, device, process};
 use std::fs;
 
 pub trait SystemIntegration: Send + Sync {
     /// 当切换账号时执行的系统层操作（如杀进程、写入文件、注入数据库）
     async fn on_account_switch(&self, account: &crate::models::Account) -> Result<(), String>;
-    
+
     /// 更新系统托盘（如果适用）
     fn update_tray(&self);
-    
+
     /// 发送系统通知
     fn show_notification(&self, title: &str, body: &str);
 }
@@ -20,8 +20,11 @@ pub struct DesktopIntegration {
 
 impl SystemIntegration for DesktopIntegration {
     async fn on_account_switch(&self, account: &crate::models::Account) -> Result<(), String> {
-        crate::modules::logger::log_info(&format!("[Desktop] Executing system switch for: {}", account.email));
-        
+        crate::modules::logger::log_info(&format!(
+            "[Desktop] Executing system switch for: {}",
+            account.email
+        ));
+
         // 1. 获取存储路径
         let storage_path = device::get_storage_path()?;
 
@@ -41,7 +44,7 @@ impl SystemIntegration for DesktopIntegration {
             let backup_path = db_path.with_extension("vscdb.backup");
             let _ = fs::copy(&db_path, &backup_path);
         }
-        
+
         db::inject_token(
             &db_path,
             &account.token.access_token,
@@ -51,7 +54,7 @@ impl SystemIntegration for DesktopIntegration {
             account.token.is_gcp_tos,
             account.token.project_id.as_deref(),
         )?;
-        
+
         // 4.1 同步 Service Machine ID 到数据库 (关键修复点)
         if let Some(ref profile) = account.device_profile {
             let _ = db::write_service_machine_id(&db_path, &profile.mac_machine_id);
@@ -59,10 +62,10 @@ impl SystemIntegration for DesktopIntegration {
 
         // 5. 重启外部进程
         process::start_antigravity()?;
-        
+
         // 6. 更新托盘
         let _ = crate::modules::tray::update_tray_menus(&self.app_handle);
-        
+
         Ok(())
     }
 
@@ -81,7 +84,10 @@ pub struct HeadlessIntegration;
 
 impl SystemIntegration for HeadlessIntegration {
     async fn on_account_switch(&self, account: &crate::models::Account) -> Result<(), String> {
-        crate::modules::logger::log_info(&format!("[Headless] Account switched in memory: {}", account.email));
+        crate::modules::logger::log_info(&format!(
+            "[Headless] Account switched in memory: {}",
+            account.email
+        ));
         // Docker 模式下通常不直接控制宿主机的 VS Code 进程
         // 如果需要同步配置到某个 volume，可以在此处添加逻辑
         Ok(())
@@ -106,9 +112,11 @@ impl SystemManager {
     pub async fn on_account_switch(&self, account: &Account) -> Result<(), String> {
         match self {
             SystemManager::Desktop(handle) => {
-                let integration = DesktopIntegration { app_handle: handle.clone() };
+                let integration = DesktopIntegration {
+                    app_handle: handle.clone(),
+                };
                 integration.on_account_switch(account).await
-            },
+            }
             SystemManager::Headless => {
                 let integration = HeadlessIntegration;
                 integration.on_account_switch(account).await
@@ -118,7 +126,9 @@ impl SystemManager {
 
     pub fn update_tray(&self) {
         if let SystemManager::Desktop(handle) = self {
-            let integration = DesktopIntegration { app_handle: handle.clone() };
+            let integration = DesktopIntegration {
+                app_handle: handle.clone(),
+            };
             integration.update_tray();
         }
     }
@@ -126,9 +136,11 @@ impl SystemManager {
     pub fn show_notification(&self, title: &str, body: &str) {
         match self {
             SystemManager::Desktop(handle) => {
-                let integration = DesktopIntegration { app_handle: handle.clone() };
+                let integration = DesktopIntegration {
+                    app_handle: handle.clone(),
+                };
                 integration.show_notification(title, body);
-            },
+            }
             SystemManager::Headless => {
                 let integration = HeadlessIntegration;
                 integration.show_notification(title, body);
@@ -141,9 +153,11 @@ impl SystemIntegration for SystemManager {
     async fn on_account_switch(&self, account: &crate::models::Account) -> Result<(), String> {
         match self {
             SystemManager::Desktop(handle) => {
-                let integration = DesktopIntegration { app_handle: handle.clone() };
+                let integration = DesktopIntegration {
+                    app_handle: handle.clone(),
+                };
                 integration.on_account_switch(account).await
-            },
+            }
             SystemManager::Headless => {
                 let integration = HeadlessIntegration;
                 integration.on_account_switch(account).await
@@ -154,9 +168,11 @@ impl SystemIntegration for SystemManager {
     fn update_tray(&self) {
         match self {
             SystemManager::Desktop(handle) => {
-                let integration = DesktopIntegration { app_handle: handle.clone() };
+                let integration = DesktopIntegration {
+                    app_handle: handle.clone(),
+                };
                 integration.update_tray();
-            },
+            }
             SystemManager::Headless => {
                 let integration = HeadlessIntegration;
                 integration.update_tray();
@@ -167,9 +183,11 @@ impl SystemIntegration for SystemManager {
     fn show_notification(&self, title: &str, body: &str) {
         match self {
             SystemManager::Desktop(handle) => {
-                let integration = DesktopIntegration { app_handle: handle.clone() };
+                let integration = DesktopIntegration {
+                    app_handle: handle.clone(),
+                };
                 integration.show_notification(title, body);
-            },
+            }
             SystemManager::Headless => {
                 let integration = HeadlessIntegration;
                 integration.show_notification(title, body);

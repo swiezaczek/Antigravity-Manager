@@ -1,5 +1,5 @@
-use std::sync::LazyLock;
 use regex::Regex;
+use std::sync::LazyLock;
 
 /// URL to fetch the latest Antigravity version
 #[allow(dead_code)]
@@ -8,8 +8,6 @@ const VERSION_URL: &str = "https://antigravity-auto-updater-974169037036.us-cent
 /// Second fallback: Official Changelog page
 #[allow(dead_code)]
 const CHANGELOG_URL: &str = "https://antigravity.google/changelog";
-
-
 
 /// Known stable configuration (for Docker/Headless fallback)
 /// Antigravity 4.1.32 uses Electron 39.2.3 which corresponds to Chrome 132.0.6834.160
@@ -22,9 +20,8 @@ const KNOWN_STABLE_CHROME: &str = "132.0.6834.160";
 
 /// Pre-compiled regex for version parsing (X.Y.Z pattern)
 #[allow(dead_code)]
-static VERSION_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\d+\.\d+\.\d+").expect("Invalid version regex")
-});
+static VERSION_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\d+\.\d+\.\d+").expect("Invalid version regex"));
 
 /// Parse version from response text using pre-compiled regex
 /// Matches semver pattern: X.Y.Z (e.g., "1.15.8")
@@ -37,9 +34,7 @@ fn parse_version(text: &str) -> Option<String> {
 /// Returns Ordering::Greater if v1 > v2.
 #[allow(dead_code)]
 fn compare_semver(v1: &str, v2: &str) -> std::cmp::Ordering {
-    let parse = |v: &str| -> Vec<u32> {
-        v.split('.').filter_map(|s| s.parse().ok()).collect()
-    };
+    let parse = |v: &str| -> Vec<u32> { v.split('.').filter_map(|s| s.parse().ok()).collect() };
     let p1 = parse(v1);
     let p2 = parse(v2);
     for i in 0..p1.len().max(p2.len()) {
@@ -215,13 +210,15 @@ pub fn get_default_user_agent() -> String {
         "linux" => "linux/amd64",
         _ => "linux/amd64",
     };
-    format!("antigravity/{} {} google-api-nodejs-client/10.3.0", env!("CARGO_PKG_VERSION"), platform_info)
+    format!(
+        "antigravity/{} {} google-api-nodejs-client/10.3.0",
+        env!("CARGO_PKG_VERSION"),
+        platform_info
+    )
 }
 
 /// Global Session ID (generated once per app launch)
-pub static SESSION_ID: LazyLock<String> = LazyLock::new(|| {
-    uuid::Uuid::new_v4().to_string()
-});
+pub static SESSION_ID: LazyLock<String> = LazyLock::new(|| uuid::Uuid::new_v4().to_string());
 
 /// Returns the best version choice between local and remote
 /// Version selection: max(local installation, remote latest, known stable 4.1.32)
@@ -247,8 +244,7 @@ pub static USER_AGENT: LazyLock<String> = LazyLock::new(|| {
 
     format!(
         "antigravity/{} {} google-api-nodejs-client/10.3.0",
-        canonical_version,
-        platform_info
+        canonical_version, platform_info
     )
 });
 
@@ -285,11 +281,23 @@ mod tests {
 
     #[test]
     fn test_compare_semver() {
-        assert_eq!(compare_semver("4.1.32", "4.1.22"), std::cmp::Ordering::Greater);
+        assert_eq!(
+            compare_semver("4.1.32", "4.1.22"),
+            std::cmp::Ordering::Greater
+        );
         assert_eq!(compare_semver("4.1.22", "4.1.32"), std::cmp::Ordering::Less);
-        assert_eq!(compare_semver("4.1.32", "4.1.32"), std::cmp::Ordering::Equal);
-        assert_eq!(compare_semver("5.0.0", "4.9.9"), std::cmp::Ordering::Greater);
-        assert_eq!(compare_semver("1.16.5", "1.16.4"), std::cmp::Ordering::Greater);
+        assert_eq!(
+            compare_semver("4.1.32", "4.1.32"),
+            std::cmp::Ordering::Equal
+        );
+        assert_eq!(
+            compare_semver("5.0.0", "4.9.9"),
+            std::cmp::Ordering::Greater
+        );
+        assert_eq!(
+            compare_semver("1.16.5", "1.16.4"),
+            std::cmp::Ordering::Greater
+        );
     }
 
     #[test]

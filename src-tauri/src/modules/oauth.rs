@@ -39,7 +39,7 @@ impl UserInfo {
                 return Some(name.clone());
             }
         }
-        
+
         // If name is empty, combine given_name and family_name
         match (&self.given_name, &self.family_name) {
             (Some(given), Some(family)) => Some(format!("{} {}", given, family)),
@@ -350,7 +350,7 @@ pub fn get_auth_url_with_client(
         ("include_granted_scopes", "true"),
         ("state", state),
     ];
-    
+
     let url = url::Url::parse_with_params(AUTH_URL, &params)
         .map_err(|e| format!("Invalid Auth URL: {}", e))?;
     Ok((url.to_string(), client.key))
@@ -374,7 +374,7 @@ async fn exchange_code_once(
     } else {
         crate::utils::http::get_long_standard_client()
     };
-    
+
     let params = [
         ("client_id", client_cfg.client_id.as_str()),
         ("client_secret", client_cfg.client_secret.as_str()),
@@ -383,9 +383,7 @@ async fn exchange_code_once(
         ("grant_type", "authorization_code"),
     ];
 
-    tracing::debug!(
-        "[OAuth] Sending exchange_code request with canonical IDE User-Agent"
-    );
+    tracing::debug!("[OAuth] Sending exchange_code request with canonical IDE User-Agent");
 
     let response = client
         .post(TOKEN_URL)
@@ -416,7 +414,7 @@ async fn exchange_code_once(
             .await
             .map_err(|e| (None, format!("Token parsing failed: {}", e)))?;
         token_res.oauth_client_key = Some(client_cfg.key.clone());
-        
+
         // Add detailed logs
         crate::modules::logger::log_info(&format!(
             "Token exchange successful via [{}]! access_token: {}..., refresh_token: {}",
@@ -428,7 +426,7 @@ async fn exchange_code_once(
                 "✗ Missing"
             }
         ));
-        
+
         // Log warning if refresh_token is missing
         if token_res.refresh_token.is_none() {
             crate::modules::logger::log_warn(
@@ -438,7 +436,7 @@ async fn exchange_code_once(
                  3. OAuth parameter configuration issue",
             );
         }
-        
+
         Ok(token_res)
     } else {
         let status = response.status();
@@ -520,7 +518,7 @@ async fn refresh_access_token_once(
     } else {
         crate::utils::http::get_long_standard_client()
     };
-    
+
     let params = [
         ("client_id", client_cfg.client_id.as_str()),
         ("client_secret", client_cfg.client_secret.as_str()),
@@ -534,16 +532,17 @@ async fn refresh_access_token_once(
     } else {
         crate::modules::logger::log_info("Refreshing Token for generic request (no account_id)...");
     }
-    
-    tracing::debug!(
-        "[OAuth] Sending refresh_access_token request with canonical IDE User-Agent"
-    );
+
+    tracing::debug!("[OAuth] Sending refresh_access_token request with canonical IDE User-Agent");
 
     let response = client
         .post(TOKEN_URL)
         .header(rquest::header::ACCEPT, "*/*")
         .header(rquest::header::ACCEPT_ENCODING, "gzip, deflate, br")
-        .header(rquest::header::USER_AGENT, "google-api-nodejs-client/10.3.0")
+        .header(
+            rquest::header::USER_AGENT,
+            "google-api-nodejs-client/10.3.0",
+        )
         .header("x-goog-api-client", "gl-node/22.21.1")
         .form(&params)
         .send()
@@ -568,7 +567,7 @@ async fn refresh_access_token_once(
             .await
             .map_err(|e| (None, format!("Refresh data parsing failed: {}", e)))?;
         token_data.oauth_client_key = Some(client_cfg.key.clone());
-        
+
         crate::modules::logger::log_info(&format!(
             "Token refreshed successfully via [{}]! Expires in: {} seconds",
             client_cfg.key, token_data.expires_in
@@ -625,8 +624,8 @@ pub async fn refresh_access_token_with_client(
                     "Refresh failed for client [{}]: {}",
                     client_cfg.key, err_msg
                 ));
-    }
-}
+            }
+        }
     }
 
     Err(format!(
@@ -644,26 +643,33 @@ pub async fn refresh_access_token(
 }
 
 /// Get user info
-pub async fn get_user_info(access_token: &str, account_id: Option<&str>) -> Result<UserInfo, String> {
+pub async fn get_user_info(
+    access_token: &str,
+    account_id: Option<&str>,
+) -> Result<UserInfo, String> {
     let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
         pool.get_effective_client(account_id, 15).await
     } else {
         crate::utils::http::get_client()
     };
-    
+
     let response = client
         .get(USERINFO_URL)
         .bearer_auth(access_token)
         .header(rquest::header::ACCEPT, "*/*")
         .header(rquest::header::ACCEPT_ENCODING, "gzip, deflate, br")
-        .header(rquest::header::USER_AGENT, crate::constants::USER_AGENT.as_str())
+        .header(
+            rquest::header::USER_AGENT,
+            crate::constants::USER_AGENT.as_str(),
+        )
         .header("x-goog-api-client", "gl-node/22.21.1")
         .send()
         .await
         .map_err(|e| format!("User info request failed: {}", e))?;
 
     if response.status().is_success() {
-        response.json::<UserInfo>()
+        response
+            .json::<UserInfo>()
             .await
             .map_err(|e| format!("User info parsing failed: {}", e))
     } else {
@@ -679,14 +685,17 @@ pub async fn ensure_fresh_token(
     account_id: Option<&str>,
 ) -> Result<crate::models::TokenData, String> {
     let now = chrono::Local::now().timestamp();
-    
+
     // Keep enough validity to avoid immediate post-switch refresh failure.
     if current_token.expiry_timestamp > now + TOKEN_REFRESH_SKEW_SECONDS {
         return Ok(current_token.clone());
     }
-    
+
     // Need to refresh
-    crate::modules::logger::log_info(&format!("Token expiring soon for account {:?}, refreshing...", account_id));
+    crate::modules::logger::log_info(&format!(
+        "Token expiring soon for account {:?}, refreshing...",
+        account_id
+    ));
     let response = refresh_access_token_with_client(
         &current_token.refresh_token,
         account_id,
@@ -696,7 +705,7 @@ pub async fn ensure_fresh_token(
 
     let oauth_client_key =
         normalize_refreshed_oauth_client_key(current_token, response.oauth_client_key.clone());
-    
+
     // Construct new TokenData
     Ok(crate::models::TokenData::new(
         response.access_token,
@@ -704,7 +713,7 @@ pub async fn ensure_fresh_token(
         response.expires_in,
         current_token.email.clone(),
         current_token.project_id.clone(), // Keep original project_id
-        None,  // session_id will be generated in token_manager
+        None,                             // session_id will be generated in token_manager
         current_token.is_gcp_tos,
     )
     .with_oauth_client_key(oauth_client_key))
@@ -719,10 +728,9 @@ mod tests {
         let redirect_uri = "http://localhost:8080/callback";
         let state = "test-state-123456";
         let url = get_auth_url(redirect_uri, state);
-        
+
         assert!(url.contains("state=test-state-123456"));
         assert!(url.contains("redirect_uri=http%3A%2F%2Flocalhost%3A8080%2Fcallback"));
         assert!(url.contains("response_type=code"));
     }
-
 }

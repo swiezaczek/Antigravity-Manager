@@ -529,14 +529,8 @@ fn cidr_match(ip: &str, cidr: &str) -> bool {
         Err(_) => return false,
     };
 
-    let ip_parts: Vec<u8> = ip
-        .split('.')
-        .filter_map(|s| s.parse().ok())
-        .collect();
-    let net_parts: Vec<u8> = network
-        .split('.')
-        .filter_map(|s| s.parse().ok())
-        .collect();
+    let ip_parts: Vec<u8> = ip.split('.').filter_map(|s| s.parse().ok()).collect();
+    let net_parts: Vec<u8> = network.split('.').filter_map(|s| s.parse().ok()).collect();
 
     if ip_parts.len() != 4 || net_parts.len() != 4 {
         return false;
@@ -559,7 +553,10 @@ fn cidr_match(ip: &str, cidr: &str) -> bool {
 // ============================================================================
 
 /// 添加 IP 到白名单
-pub fn add_to_whitelist(ip_pattern: &str, description: Option<&str>) -> Result<IpWhitelistEntry, String> {
+pub fn add_to_whitelist(
+    ip_pattern: &str,
+    description: Option<&str>,
+) -> Result<IpWhitelistEntry, String> {
     let conn = connect_db()?;
 
     let id = uuid::Uuid::new_v4().to_string();
@@ -660,7 +657,10 @@ pub fn clear_ip_access_logs() -> Result<(), String> {
 
 /// 获取 IP 访问日志总数
 #[allow(dead_code)]
-pub fn get_ip_access_logs_count(ip_filter: Option<&str>, blocked_only: bool) -> Result<u64, String> {
+pub fn get_ip_access_logs_count(
+    ip_filter: Option<&str>,
+    blocked_only: bool,
+) -> Result<u64, String> {
     let conn = connect_db()?;
 
     let sql = if blocked_only {
