@@ -522,7 +522,8 @@ async fn refresh_access_token_once(
 ) -> Result<TokenResponse, (Option<reqwest::StatusCode>, String)> {
     // [PHASE 2] 根据 account_id 使用对应的代理
     let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
-        pool.get_effective_standard_client(account_id, 60, false).await
+        pool.get_effective_standard_client(account_id, 60, false, false)
+            .await
     } else {
         crate::utils::http::get_long_standard_client()
     };
@@ -695,7 +696,8 @@ pub async fn revoke_token(token: &str) -> Result<(), String> {
 /// Get user info
 pub async fn get_user_info(access_token: &str, account_id: Option<&str>) -> Result<UserInfo, String> {
     let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
-        pool.get_effective_standard_client(account_id, 15, false).await
+        pool.get_effective_standard_client(account_id, 15, false, false)
+            .await
     } else {
         crate::utils::http::get_standard_client()
     };

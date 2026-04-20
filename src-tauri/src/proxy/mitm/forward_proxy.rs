@@ -216,12 +216,15 @@ async fn handle_tunneled_request(
     // AI wysyła pełne uri, np: file:///c:/Users/ag/... Korelacja tych unikalnych ścieżek niszczy izolację kont.
     // Zastępujemy je wszystkie na generyczne file:///workspace/ w bezpieczny strumieniowy sposób.
     // LIMITATION: Tylko text/json (generateContent i podobne), zeby nie uszkodzic Protobuf!
-    let is_ai_or_assist_payload = path.contains("generateContent") || path.contains("CodeAssist") || path.contains("chat");
+    let is_ai_or_assist_payload = path.contains("generateContent")
+        || path.contains("CodeAssist")
+        || path.contains("chat");
     let mut modified_body = false;
     if is_ai_or_assist_payload && !body.is_empty() {
         if let Ok(mut stringified_body) = String::from_utf8(body.clone()) {
             if stringified_body.contains("file:///") {
-                let re = regex::Regex::new(r#"(?i)file:///(?:[A-Za-z](?:%3A|:)[/\\]|/)(?:[^/&?#\s"'\\]+[/\\])+([^/&?#\s"'\\]+)"#).unwrap();
+                let re_pattern = r#"(?i)file:///(?:[A-Za-z](?:%3A|:)[/\\]|/)(?:[^/&?#\s"'\\]+[/\\])+([^/&?#\s"'\\]+)"#;
+                let re = regex::Regex::new(re_pattern).unwrap();
                 stringified_body = re.replace_all(&stringified_body, "file:///workspace/$1").into_owned();
                 body = stringified_body.into_bytes();
                 modified_body = true;
@@ -516,8 +519,13 @@ async fn forward_to_upstream_with_proxy(
     // Unleash (api/client) and Clearcut (/log) use HTTP/2 natively via Go LS.
     // v1internal is Node.js and must stay HTTP/1.1.
     let allow_http2 = path.contains("/api/client") || path.contains("/log") || host.contains("play.googleapis.com");
-    let is_go_ls = headers.iter().any(|h| h.to_lowercase().starts_with("user-agent:") && !h.to_lowercase().contains("nodejs"));
-    let client = proxy_pool.get_effective_standard_client(account_id, 30, allow_http2, is_go_ls).await;
+    let is_go_ls = headers.iter().any(|h| {
+        let h_low = h.to_lowercase();
+        h_low.starts_with("user-agent:") && !h_low.contains("nodejs")
+    });
+    let client = proxy_pool
+        .get_effective_standard_client(account_id, 30, allow_http2, is_go_ls)
+        .await;
     
     // [FIX] Rewrite spoofed local hosts back to canonical Google hosts for upstream resolution
     let real_host = match host {

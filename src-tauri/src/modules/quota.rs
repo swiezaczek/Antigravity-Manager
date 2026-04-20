@@ -94,7 +94,8 @@ struct Tier {
 /// Get shared HTTP Client (15s timeout) for pure info fetching (No JA3)
 async fn create_standard_client(account_id: Option<&str>) -> rquest::Client {
     if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
-        pool.get_effective_standard_client(account_id, 15, false).await
+        pool.get_effective_standard_client(account_id, 15, false, false)
+            .await
     } else {
         crate::utils::http::get_standard_client()
     }
@@ -104,7 +105,8 @@ async fn create_standard_client(account_id: Option<&str>) -> rquest::Client {
 #[allow(dead_code)] // 预留给预热/后台任务调用
 async fn create_long_standard_client(account_id: Option<&str>) -> rquest::Client {
     if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
-        pool.get_effective_standard_client(account_id, 60, false).await
+        pool.get_effective_standard_client(account_id, 60, false, false)
+            .await
     } else {
         crate::utils::http::get_long_standard_client()
     }
@@ -330,7 +332,14 @@ pub async fn fetch_quota_with_cache(
                         let reset_time = quota_info.reset_time.clone().unwrap_or_default();
                         
                         // Only keep models we care about (exclude internal chat models)
-                        if name.starts_with("gemini") || name.starts_with("claude") || name.contains("claude") || name.starts_with("gpt") || name.starts_with("image") || name.starts_with("imagen") {
+                        let is_target_model = name.starts_with("gemini")
+                            || name.starts_with("claude")
+                            || name.contains("claude")
+                            || name.starts_with("gpt")
+                            || name.starts_with("image")
+                            || name.starts_with("imagen");
+
+                        if is_target_model {
                             let model_quota = crate::models::quota::ModelQuota {
                                 name,
                                 percentage,
