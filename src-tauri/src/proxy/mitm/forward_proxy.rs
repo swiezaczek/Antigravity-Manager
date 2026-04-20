@@ -397,16 +397,10 @@ fn spoof_headers(headers: Vec<String>, account_id: Option<&str>) -> Vec<String> 
             new_headers.push(format!("unleash-connection-id: {}", spoofed));
             continue;
         }
-        if h_lower.starts_with("user-agent:") {
-            if h_lower.contains("antigravity/") {
-                // [OPSEC V12] Case-insensitive User-Agent spoofing
-                // Prevents leakage if the IDE sends "Antigravity/1.0" or "ANTIGRAVITY"
-                static RE: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| regex::Regex::new(r"(?i)antigravity").unwrap());
-                let spoofed = RE.replace_all(&line, "cloudcode").into_owned();
-                new_headers.push(spoofed);
-                continue;
-            }
-        }
+        // [OPSEC Fix] REMOVED: User-Agent spoofing of "antigravity" → "cloudcode" was
+        // counter-productive. Canonical MITM capture (deep_fetchuserinfo.txt) proves the
+        // official client sends "antigravity/1.22.2" in User-Agent. Replacing it with
+        // "cloudcode" creates a fingerprint mismatch with the OAuth token metadata.
         
         new_headers.push(line);
     }
