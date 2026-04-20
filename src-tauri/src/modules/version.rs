@@ -1,7 +1,5 @@
 use crate::modules::process;
 
-
-
 /// Antigravity 版本信息
 #[derive(Debug, Clone)]
 pub struct AntigravityVersion {

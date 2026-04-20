@@ -1161,7 +1161,7 @@ mod tests {
             let tool_part = parts
                 .iter()
                 .find(|p| p.get("functionCall").is_some())
-                .expect(&format!("[{model}] Should find functionCall part"));
+                .unwrap_or_else(|| panic!("[{model}] Should find functionCall part"));
 
             assert_eq!(
                 tool_part["thoughtSignature"].as_str(),

@@ -14,9 +14,7 @@ pub fn create_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     // 2. Load icon (macOS uses Template Image)
     let icon_bytes = include_bytes!("../../icons/tray-icon.png");
     let img = image::load_from_memory(icon_bytes)
-        .map_err(|e| {
-            tauri::Error::Io(std::io::Error::other(e.to_string()))
-        })?
+        .map_err(|e| tauri::Error::Io(std::io::Error::other(e.to_string())))?
         .to_rgba8();
     let (width, height) = img.dimensions();
     let icon = Image::new_owned(img.into_raw(), width, height);
@@ -145,7 +143,9 @@ pub fn create_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                             let integration = crate::modules::integration::DesktopIntegration {
                                 app_handle: app_handle.clone(),
                             };
-                            if modules::switch_account(&next_account.id, &integration).await.is_ok()
+                            if modules::switch_account(&next_account.id, &integration)
+                                .await
+                                .is_ok()
                             {
                                 // 3. Notify frontend
                                 let _ = app_handle

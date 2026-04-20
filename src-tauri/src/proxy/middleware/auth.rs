@@ -262,7 +262,7 @@ mod tests {
     }
 
     #[test]
-    fn test_auth_placeholder() {
-        assert!(true);
+    fn test_auth_layer() {
+        // Dummy test inside auth.rs
     }
 }

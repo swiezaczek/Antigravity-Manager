@@ -726,39 +726,41 @@ pub async fn handle_messages(
             // ===== Layer 1: Tool Message Trimming (L1 threshold) =====
             // Borrowed from Practical-Guide-to-Context-Engineering
             // Advantage: Completely cache-friendly (only removes messages, doesn't modify content)
-            if usage_ratio > threshold_l1 && !compression_applied
-                && ContextManager::trim_tool_messages(&mut request_with_mapped.messages, 5) {
-                    info!(
-                        "[{}] [Layer-1] Tool trimming triggered (usage: {:.1}%, threshold: {:.1}%)",
-                        trace_id,
-                        usage_ratio * 100.0,
-                        threshold_l1 * 100.0
-                    );
-                    compression_applied = true;
+            if usage_ratio > threshold_l1
+                && !compression_applied
+                && ContextManager::trim_tool_messages(&mut request_with_mapped.messages, 5)
+            {
+                info!(
+                    "[{}] [Layer-1] Tool trimming triggered (usage: {:.1}%, threshold: {:.1}%)",
+                    trace_id,
+                    usage_ratio * 100.0,
+                    threshold_l1 * 100.0
+                );
+                compression_applied = true;
 
-                    // Re-estimate after trimming (with calibration)
-                    let new_raw = ContextManager::estimate_token_usage(&request_with_mapped);
-                    let new_usage = calibrator.calibrate(new_raw);
-                    let new_ratio = new_usage as f32 / context_limit as f32;
+                // Re-estimate after trimming (with calibration)
+                let new_raw = ContextManager::estimate_token_usage(&request_with_mapped);
+                let new_usage = calibrator.calibrate(new_raw);
+                let new_ratio = new_usage as f32 / context_limit as f32;
 
-                    info!(
-                        "[{}] [Layer-1] Compression result: {:.1}% → {:.1}% (saved {} tokens)",
-                        trace_id,
-                        usage_ratio * 100.0,
-                        new_ratio * 100.0,
-                        estimated_usage - new_usage
-                    );
+                info!(
+                    "[{}] [Layer-1] Compression result: {:.1}% → {:.1}% (saved {} tokens)",
+                    trace_id,
+                    usage_ratio * 100.0,
+                    new_ratio * 100.0,
+                    estimated_usage - new_usage
+                );
 
-                    // If compression is sufficient, skip further layers
-                    if new_ratio < 0.7 {
-                        estimated_usage = new_usage;
-                        usage_ratio = new_ratio;
-                        // Success, no need for Layer 2
-                    } else {
-                        // Still high pressure, update for Layer 2
-                        usage_ratio = new_ratio;
-                        compression_applied = false; // Allow Layer 2 to run
-                    }
+                // If compression is sufficient, skip further layers
+                if new_ratio < 0.7 {
+                    estimated_usage = new_usage;
+                    usage_ratio = new_ratio;
+                    // Success, no need for Layer 2
+                } else {
+                    // Still high pressure, update for Layer 2
+                    usage_ratio = new_ratio;
+                    compression_applied = false; // Allow Layer 2 to run
+                }
             }
 
             // ===== Layer 2: Thinking Content Compression (L2 threshold) =====

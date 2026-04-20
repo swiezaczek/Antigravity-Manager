@@ -1297,7 +1297,10 @@ fn build_contents(
                                 for block in arr {
                                     if let Some(text) = block.get("text").and_then(|v| v.as_str()) {
                                         texts.push(text.to_string());
-                                    } else if block.get("source").is_some() && block.get("type").and_then(|v| v.as_str()) == Some("image") {
+                                    } else if block.get("source").is_some()
+                                        && block.get("type").and_then(|v| v.as_str())
+                                            == Some("image")
+                                    {
                                         let source = block.get("source").unwrap();
                                         if let (Some(media_type), Some(data)) = (
                                             source.get("media_type").and_then(|v| v.as_str()),

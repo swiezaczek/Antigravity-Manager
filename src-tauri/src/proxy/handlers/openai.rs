@@ -704,13 +704,16 @@ pub async fn handle_chat_completions(
         }
 
         // 只有 403 (权限/地区限制) 和 401 (认证失效) 触发账号轮换
-        if (status_code == 403 || status_code == 401) && apply_retry_strategy(
-            RetryStrategy::FixedDelay(Duration::from_millis(200)),
-            attempt,
-            max_attempts,
-            status_code,
-            &trace_id,
-        ).await {
+        if (status_code == 403 || status_code == 401)
+            && apply_retry_strategy(
+                RetryStrategy::FixedDelay(Duration::from_millis(200)),
+                attempt,
+                max_attempts,
+                status_code,
+                &trace_id,
+            )
+            .await
+        {
             continue;
         }
 
@@ -1768,8 +1771,7 @@ async fn intercept_chat_to_image(
 
                 let sse_data = format!(
                     "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
-                    chunk,
-                    done_chunk
+                    chunk, done_chunk
                 );
 
                 let body = Body::from(sse_data);

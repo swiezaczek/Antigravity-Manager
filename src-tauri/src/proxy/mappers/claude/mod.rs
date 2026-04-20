@@ -219,7 +219,10 @@ fn process_sse_line(
     }
 
     // 捕获 groundingMetadata (Web Search)
-    if let Some(candidate) = raw_json.get("candidates").and_then(|c| c.as_array()?.first()) {
+    if let Some(candidate) = raw_json
+        .get("candidates")
+        .and_then(|c| c.as_array()?.first())
+    {
         if let Some(grounding) = candidate.get("groundingMetadata") {
             // 提取搜索词
             if let Some(query) = grounding

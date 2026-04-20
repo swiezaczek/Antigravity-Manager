@@ -264,7 +264,7 @@ fn test_ultra_accounts_sorted_by_quota() {
 /// 测试完整排序场景：混合账号池
 #[test]
 fn test_full_sorting_mixed_accounts() {
-    fn sort_tokens_for_model(tokens: &mut Vec<ProxyToken>, target_model: &str) {
+    fn sort_tokens_for_model(tokens: &mut [ProxyToken], target_model: &str) {
         tokens.sort_by(|a, b| compare_tokens_for_model(a, b, target_model));
     }
 

@@ -409,7 +409,9 @@ fn clean_json_schema_recursive(value: &mut Value, is_schema_node: bool, depth: u
                 // 之前的实现会为空 Object 注入 reason 字段，导致 Gemini CLI 等工具报 "malformed function call"
                 // 因为模型会生成包含 reason 参数的调用，但工具定义中并没有这个参数
                 // 现在改为：空 Object 保持空的 properties，让 Gemini 模型自行决定是否需要参数
-                if map.get("type").and_then(|t| t.as_str()) == Some("object") && !map.contains_key("properties") {
+                if map.get("type").and_then(|t| t.as_str()) == Some("object")
+                    && !map.contains_key("properties")
+                {
                     map.insert("properties".to_string(), serde_json::json!({}));
                 }
 
@@ -796,7 +798,12 @@ fn fix_single_arg_recursive(value: &mut Value, schema: &Value) {
                 }
             }
         }
-        "string" if !value.is_string() && !value.is_null() && !value.is_object() && !value.is_array() => {
+        "string"
+            if !value.is_string()
+                && !value.is_null()
+                && !value.is_object()
+                && !value.is_array() =>
+        {
             // 非字符串 → 字符串 (防止客户端误传数字给文本字段)
             *value = Value::String(value.to_string());
         }

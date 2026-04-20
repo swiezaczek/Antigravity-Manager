@@ -137,7 +137,7 @@ mod tests {
     #[test]
     fn test_multi_account_quota_protection_filtering() {
         // 创建 3 个账号
-        let tokens = vec![
+        let tokens = [
             // 账号 1: claude 被保护（配额低）
             create_mock_token("account-1", "user1@example.com", vec!["claude"], Some(20)),
             // 账号 2: 没有被保护
@@ -207,7 +207,7 @@ mod tests {
     #[test]
     fn test_all_accounts_protected_returns_error() {
         // 创建 3 个账号，全部对 claude 进行保护
-        let tokens = vec![
+        let tokens = [
             create_mock_token("account-1", "user1@example.com", vec!["claude"], Some(10)),
             create_mock_token("account-2", "user2@example.com", vec!["claude"], Some(15)),
             create_mock_token("account-3", "user3@example.com", vec!["claude"], Some(5)),
@@ -313,7 +313,7 @@ mod tests {
     #[test]
     fn test_priority_fallback_when_protected() {
         // 创建 3 个账号，按配额排序
-        let mut tokens = vec![
+        let mut tokens = [
             create_mock_token("account-high", "high@example.com", vec!["claude"], Some(90)),
             create_mock_token("account-mid", "mid@example.com", vec![], Some(60)),
             create_mock_token("account-low", "low@example.com", vec![], Some(30)),
@@ -428,7 +428,7 @@ mod tests {
         };
 
         // 2. 创建多个账号，模拟不同配额状态
-        let accounts = vec![
+        let accounts = [
             // 账号 A: Claude 配额低（50%），应该被保护
             create_mock_token("account-a", "a@example.com", vec!["claude"], Some(50)),
             // 账号 B: Claude 配额正常（80%），不被保护
@@ -592,7 +592,7 @@ mod tests {
         account_a.protected_models.insert("claude".to_string());
 
         // === 请求 3: 尝试使用账号 A，但被配额保护 ===
-        let accounts = vec![account_a.clone()]; // 只有一个账号
+        let accounts = [account_a.clone()]; // 只有一个账号
 
         // 检查绑定的账号是否被保护
         let bound_id = session_bindings.get(session_id).unwrap();
@@ -661,7 +661,7 @@ mod tests {
         account_a.protected_models.insert("claude".to_string());
 
         // === 请求 3: 账号 A 被保护，应该解绑并切换到账号 B ===
-        let accounts = vec![account_a.clone(), account_b.clone()];
+        let accounts = [account_a.clone(), account_b.clone()];
 
         // 检查绑定的账号
         let bound_id = session_bindings.get(session_id).unwrap();
@@ -707,7 +707,7 @@ mod tests {
         // 这个测试模拟 update_account_quota 触发 TokenManager 重新加载的场景
 
         // 初始内存状态
-        let mut tokens_in_memory = vec![create_mock_token(
+        let mut tokens_in_memory = [create_mock_token(
             "account-a",
             "a@example.com",
             vec![],
@@ -774,7 +774,7 @@ mod tests {
         let mut account_b = create_mock_token("account-b", "b@example.com", vec![], Some(80));
 
         // === 阶段 1: 初始状态，两个账号都可用 ===
-        let accounts = vec![account_a.clone(), account_b.clone()];
+        let accounts = [account_a.clone(), account_b.clone()];
         let available: Vec<_> = accounts
             .iter()
             .filter(|t| !t.protected_models.contains(&normalized_target))
@@ -785,7 +785,7 @@ mod tests {
         account_a.remaining_quota = Some(40);
         account_a.protected_models.insert("claude".to_string());
 
-        let accounts = vec![account_a.clone(), account_b.clone()];
+        let accounts = [account_a.clone(), account_b.clone()];
         let available: Vec<_> = accounts
             .iter()
             .filter(|t| !t.protected_models.contains(&normalized_target))
@@ -797,7 +797,7 @@ mod tests {
         account_b.remaining_quota = Some(30);
         account_b.protected_models.insert("claude".to_string());
 
-        let accounts = vec![account_a.clone(), account_b.clone()];
+        let accounts = [account_a.clone(), account_b.clone()];
         let available: Vec<_> = accounts
             .iter()
             .filter(|t| !t.protected_models.contains(&normalized_target))
@@ -808,7 +808,7 @@ mod tests {
         account_a.remaining_quota = Some(100);
         account_a.protected_models.remove("claude");
 
-        let accounts = vec![account_a.clone(), account_b.clone()];
+        let accounts = [account_a.clone(), account_b.clone()];
         let available: Vec<_> = accounts
             .iter()
             .filter(|t| !t.protected_models.contains(&normalized_target))
@@ -829,7 +829,7 @@ mod tests {
             normalize_to_standard_id(target_model).unwrap_or_else(|| target_model.to_string());
 
         // 场景 1: 所有账号都因配额保护不可用
-        let all_protected = vec![
+        let all_protected = [
             create_mock_token("a1", "a1@example.com", vec!["claude"], Some(30)),
             create_mock_token("a2", "a2@example.com", vec!["claude"], Some(20)),
         ];
@@ -851,7 +851,7 @@ mod tests {
         assert!(error.contains("claude"));
 
         // 场景 2: 混合情况（部分限流，部分配额保护）
-        let mixed = vec![
+        let mixed = [
             create_mock_token("a1", "a1@example.com", vec!["claude"], Some(30)),
             create_mock_token("a2", "a2@example.com", vec![], Some(20)), // 这个假设被限流
         ];
@@ -974,7 +974,7 @@ mod tests {
         std::fs::write(&path_c, account_c_json.to_string()).unwrap();
 
         // 创建 tokens，remaining_quota 使用 max 值（模拟旧逻辑）
-        let mut tokens = vec![
+        let mut tokens = [
             create_mock_token_with_path(
                 "a",
                 "carmelioventori@example.com",

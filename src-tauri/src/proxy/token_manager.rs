@@ -685,9 +685,8 @@ impl TokenManager {
                     .get("protected_models")
                     .and_then(|v| v.as_array());
 
-                let is_protected = protected_models.is_some_and(|arr| {
-                    arr.iter().any(|m| m.as_str() == Some(std_id as &str))
-                });
+                let is_protected = protected_models
+                    .is_some_and(|arr| arr.iter().any(|m| m.as_str() == Some(std_id as &str)));
 
                 if is_protected
                     && self
@@ -1519,52 +1518,49 @@ impl TokenManager {
                     .unwrap_or_else(|| target_model.to_string());
 
             // 模式 A: 粘性会话处理 (CacheFirst 或 Balance 且有 session_id)
-            if !rotate
-                && scheduling.mode != SchedulingMode::PerformanceFirst
-            {
+            if !rotate && scheduling.mode != SchedulingMode::PerformanceFirst {
                 if let Some(sid) = session_id {
-
-                // 1. 检查会话是否已绑定账号
-                if let Some(bound_id) = self.session_accounts.get(sid).map(|v| v.clone()) {
-                    // 【修复】先通过 account_id 找到对应的账号，获取其 email
-                    // 2. 转换 email -> account_id 检查绑定的账号是否限流
-                    if let Some(bound_token) =
-                        tokens_snapshot.iter().find(|t| t.account_id == bound_id)
-                    {
-                        let key = self
-                            .email_to_account_id(&bound_token.email)
-                            .unwrap_or_else(|| bound_token.account_id.clone());
-                        // [FIX] Pass None for specific model wait time if not applicable
-                        let reset_sec = self.rate_limit_tracker.get_remaining_wait(&key, None);
-                        if reset_sec > 0 {
-                            // 【修复 Issue #284】立即解绑并切换账号，不再阻塞等待
-                            // 原因：阻塞等待会导致并发请求时客户端 socket 超时 (UND_ERR_SOCKET)
-                            tracing::debug!(
+                    // 1. 检查会话是否已绑定账号
+                    if let Some(bound_id) = self.session_accounts.get(sid).map(|v| v.clone()) {
+                        // 【修复】先通过 account_id 找到对应的账号，获取其 email
+                        // 2. 转换 email -> account_id 检查绑定的账号是否限流
+                        if let Some(bound_token) =
+                            tokens_snapshot.iter().find(|t| t.account_id == bound_id)
+                        {
+                            let key = self
+                                .email_to_account_id(&bound_token.email)
+                                .unwrap_or_else(|| bound_token.account_id.clone());
+                            // [FIX] Pass None for specific model wait time if not applicable
+                            let reset_sec = self.rate_limit_tracker.get_remaining_wait(&key, None);
+                            if reset_sec > 0 {
+                                // 【修复 Issue #284】立即解绑并切换账号，不再阻塞等待
+                                // 原因：阻塞等待会导致并发请求时客户端 socket 超时 (UND_ERR_SOCKET)
+                                tracing::debug!(
                                 "Sticky Session: Bound account {} is rate-limited ({}s), unbinding and switching.",
                                 bound_token.email, reset_sec
                             );
-                            self.session_accounts.remove(sid);
-                        } else if !(attempted.contains(&bound_id)
-                            || (quota_protection_enabled
-                                && bound_token.protected_models.contains(&normalized_target)))
-                        {
-                            // 3. 账号可用且未被标记为尝试失败，优先复用
-                            tracing::debug!("Sticky Session: Successfully reusing bound account {} for session {}", bound_token.email, sid);
-                            target_token = Some(bound_token.clone());
-                        } else if quota_protection_enabled
-                            && bound_token.protected_models.contains(&normalized_target)
-                        {
-                            tracing::debug!("Sticky Session: Bound account {} is quota-protected for model {} [{}], unbinding and switching.", bound_token.email, normalized_target, target_model);
+                                self.session_accounts.remove(sid);
+                            } else if !(attempted.contains(&bound_id)
+                                || (quota_protection_enabled
+                                    && bound_token.protected_models.contains(&normalized_target)))
+                            {
+                                // 3. 账号可用且未被标记为尝试失败，优先复用
+                                tracing::debug!("Sticky Session: Successfully reusing bound account {} for session {}", bound_token.email, sid);
+                                target_token = Some(bound_token.clone());
+                            } else if quota_protection_enabled
+                                && bound_token.protected_models.contains(&normalized_target)
+                            {
+                                tracing::debug!("Sticky Session: Bound account {} is quota-protected for model {} [{}], unbinding and switching.", bound_token.email, normalized_target, target_model);
+                                self.session_accounts.remove(sid);
+                            }
+                        } else {
+                            // 绑定的账号已不存在（可能被删除），解绑
+                            tracing::debug!(
+                                "Sticky Session: Bound account not found for session {}, unbinding",
+                                sid
+                            );
                             self.session_accounts.remove(sid);
                         }
-                    } else {
-                        // 绑定的账号已不存在（可能被删除），解绑
-                        tracing::debug!(
-                            "Sticky Session: Bound account not found for session {}, unbinding",
-                            sid
-                        );
-                        self.session_accounts.remove(sid);
-                    }
                     }
                 }
             }
@@ -3250,7 +3246,7 @@ mod tests {
     fn test_full_sorting_integration() {
         let now = chrono::Utc::now().timestamp();
 
-        let mut tokens = vec![
+        let mut tokens = [
             create_test_token(
                 "free_high@test.com",
                 Some("FREE"),
@@ -3329,7 +3325,7 @@ mod tests {
         // b 应该排在 a 前面（刷新时间更近）
         assert_eq!(compare_tokens(&account_b, &account_a), Ordering::Less);
 
-        let mut tokens = vec![account_a.clone(), account_b.clone()];
+        let mut tokens = [account_a.clone(), account_b.clone()];
         tokens.sort_by(compare_tokens);
 
         assert_eq!(tokens[0].email, "b@test.com");
@@ -3714,7 +3710,7 @@ mod tests {
     /// 测试完整排序场景：混合账号池
     #[test]
     fn test_full_sorting_mixed_accounts() {
-        fn sort_tokens_for_model(tokens: &mut Vec<ProxyToken>, target_model: &str) {
+        fn sort_tokens_for_model(tokens: &mut [ProxyToken], target_model: &str) {
             const ULTRA_REQUIRED_MODELS: &[&str] = &["claude-opus-4-6", "claude-opus-4-5", "opus"];
             let requires_ultra = {
                 let lower = target_model.to_lowercase();

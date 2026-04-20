@@ -560,6 +560,5 @@ mod tests {
     fn test_record_and_query() {
         // This would need a test database setup
         // For now, just verify the module compiles
-        assert!(true);
     }
 }

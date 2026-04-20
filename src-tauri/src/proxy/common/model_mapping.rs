@@ -4,8 +4,7 @@ use once_cell::sync::Lazy;
 use std::collections::HashMap;
 
 // 动态官方废弃模型转发表 (old_model_id -> new_model_id)
-pub static DYNAMIC_MODEL_FORWARDING_RULES: Lazy<DashMap<String, String>> =
-    Lazy::new(DashMap::new);
+pub static DYNAMIC_MODEL_FORWARDING_RULES: Lazy<DashMap<String, String>> = Lazy::new(DashMap::new);
 
 pub fn update_dynamic_forwarding_rules(old_model: String, new_model: String) {
     if !DYNAMIC_MODEL_FORWARDING_RULES.contains_key(&old_model) {

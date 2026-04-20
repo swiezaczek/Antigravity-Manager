@@ -53,13 +53,13 @@ mod tests {
     }
 
     /// Helper to write corrupted content to accounts.json
-    fn write_corrupted_index(path: &PathBuf, content: &[u8]) {
+    fn write_corrupted_index(path: &std::path::Path, content: &[u8]) {
         let index_path = path.join("accounts.json");
         fs::write(&index_path, content).expect("Failed to write corrupted index");
     }
 
     /// Helper to create a valid account file in accounts/ directory
-    fn create_account_file(path: &PathBuf, account_id: &str, email: &str) {
+    fn create_account_file(path: &std::path::Path, account_id: &str, email: &str) {
         let accounts_dir = path.join("accounts");
         fs::create_dir_all(&accounts_dir).expect("Failed to create accounts dir");
 
@@ -225,7 +225,7 @@ mod tests {
         let account_files: Vec<_> = fs::read_dir(&accounts_dir)
             .unwrap()
             .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().map_or(false, |ext| ext == "json"))
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
             .collect();
         assert_eq!(
             account_files.len(),
@@ -349,7 +349,7 @@ mod tests {
             .filter(|e| {
                 e.file_name()
                     .to_str()
-                    .map_or(false, |name| name.starts_with("accounts.json.corrupt-"))
+                    .is_some_and(|name| name.starts_with("accounts.json.corrupt-"))
             })
             .collect();
 
@@ -357,7 +357,7 @@ mod tests {
 
         // Verify backup contains the original garbage content
         let backup_content =
-            fs::read(&backup_files[0].path()).expect("Should be able to read backup file");
+            fs::read(backup_files[0].path()).expect("Should be able to read backup file");
         assert_eq!(
             backup_content, garbage_content,
             "Backup should contain original corrupt content"
@@ -474,7 +474,10 @@ fn load_account_index_in_dir(data_dir: &std::path::Path) -> Result<AccountIndex,
 }
 
 /// Save account index to a specific directory (internal helper)
-fn save_account_index_in_dir(data_dir: &std::path::Path, index: &AccountIndex) -> Result<(), String> {
+fn save_account_index_in_dir(
+    data_dir: &std::path::Path,
+    index: &AccountIndex,
+) -> Result<(), String> {
     let index_path = data_dir.join(ACCOUNTS_INDEX);
     // Use unique temp file name per write to avoid collision
     let temp_filename = format!("{}.tmp.{}", ACCOUNTS_INDEX, Uuid::new_v4());
@@ -1484,10 +1487,7 @@ pub fn update_account_quota(account_id: &str, quota: QuotaData) -> Result<(), St
 
                 // [Compatibility] Migrate from account-level to model-level protection if previously disabled for quota
                 if account.proxy_disabled
-                    && account
-                        .proxy_disabled_reason
-                        .as_deref()
-                        == Some("quota_protection")
+                    && account.proxy_disabled_reason.as_deref() == Some("quota_protection")
                 {
                     crate::modules::logger::log_info(&format!(
                         "[Quota] Migrating account {} from account-level to model-level protection",
@@ -1748,121 +1748,116 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
 
     // 3. Handle 401 error
     if let Err(AppError::Network(_, Some(401))) = result {
-                modules::logger::log_warn(&format!(
-                    "401 Unauthorized for {}, forcing refresh...",
-                    account.email
-                ));
+        modules::logger::log_warn(&format!(
+            "401 Unauthorized for {}, forcing refresh...",
+            account.email
+        ));
 
-                // Force refresh
-                let token_res = match oauth::refresh_access_token_with_client(
-                    &account.token.refresh_token,
-                    Some(&account.id),
-                    account.token.oauth_client_key.as_deref(),
-                )
-                .await
-                {
-                    Ok(t) => t,
-                    Err(e) => {
-                        if e.contains("invalid_grant") {
-                            modules::logger::log_error(&format!(
+        // Force refresh
+        let token_res = match oauth::refresh_access_token_with_client(
+            &account.token.refresh_token,
+            Some(&account.id),
+            account.token.oauth_client_key.as_deref(),
+        )
+        .await
+        {
+            Ok(t) => t,
+            Err(e) => {
+                if e.contains("invalid_grant") {
+                    modules::logger::log_error(&format!(
                                 "Disabling account {} due to invalid_grant during forced refresh (quota check)",
                                 account.email
                             ));
-                            account.disabled = true;
-                            account.disabled_at = Some(chrono::Utc::now().timestamp());
-                            account.disabled_reason = Some(format!("invalid_grant: {}", e));
-                            let _ = save_account(account);
-                            crate::proxy::server::trigger_account_reload(&account.id);
-                        }
-                        return Err(AppError::OAuth(e));
-                    }
-                };
-
-                let new_token = TokenData::new(
-                    token_res.access_token.clone(),
-                    account.token.refresh_token.clone(),
-                    token_res.expires_in,
-                    account.token.email.clone(),
-                    account.token.project_id.clone(), // Keep original project_id
-                    None,                             // Add None as session_id
-                    account.token.is_gcp_tos,
-                )
-                .with_oauth_client_key(
-                    token_res
-                        .oauth_client_key
-                        .clone()
-                        .or_else(|| account.token.oauth_client_key.clone()),
-                );
-
-                // Re-fetch display name
-                let name = if account.name.is_none()
-                    || account.name.as_ref().is_some_and(|n| n.trim().is_empty())
-                {
-                    match oauth::get_user_info(&token_res.access_token, Some(&account.id)).await {
-                        Ok(user_info) => user_info.get_display_name(),
-                        Err(_) => None,
-                    }
-                } else {
-                    account.name.clone()
-                };
-
-                account.token = new_token.clone();
-                account.name = name.clone();
-                upsert_account(account.email.clone(), name, new_token.clone())
-                    .map_err(AppError::Account)?;
-
-                // Retry query
-                let retry_result: crate::error::AppResult<(QuotaData, Option<String>)> =
-                    modules::fetch_quota(
-                        &new_token.access_token,
-                        &account.email,
-                        Some(&account.id),
-                    )
-                    .await;
-
-                // Also handle project_id saving during retry
-                if let Ok((ref _q, ref project_id)) = retry_result {
-                    if project_id.is_some() && *project_id != account.token.project_id {
-                        modules::logger::log_info(&format!(
-                            "Detected update of project_id after retry ({}), saving...",
-                            account.email
-                        ));
-                        account.token.project_id = project_id.clone();
-                        let _ = upsert_account(
-                            account.email.clone(),
-                            account.name.clone(),
-                            account.token.clone(),
-                        );
-                    }
+                    account.disabled = true;
+                    account.disabled_at = Some(chrono::Utc::now().timestamp());
+                    account.disabled_reason = Some(format!("invalid_grant: {}", e));
+                    let _ = save_account(account);
+                    crate::proxy::server::trigger_account_reload(&account.id);
                 }
-
-                if let Err(AppError::Network(_, Some(403))) = retry_result {
-                    let mut q = QuotaData::new();
-                    q.is_forbidden = true;
-                    return Ok(q);
-                }
-
-                match retry_result {
-                    Ok((q, _)) => {
-                        clear_validation_blocked(account);
-                        return Ok(q);
-                    }
-                    Err(e) => {
-                        if is_validation_required_error(&e) {
-                            mark_validation_blocked(account, &e.to_string());
-                        }
-                        if let Some(cached) = recover_cached_quota_on_rate_limit(account, &e) {
-                            mark_validation_blocked(account, &format_rate_limit_block_reason(&e));
-                            modules::logger::log_warn(&format!(
-                                "Quota API rate-limited for {}, using cached model list as fallback",
-                                account.email
-                            ));
-                            return Ok(cached);
-                        }
-                        return Err(e);
-                    }
-                }
+                return Err(AppError::OAuth(e));
             }
+        };
+
+        let new_token = TokenData::new(
+            token_res.access_token.clone(),
+            account.token.refresh_token.clone(),
+            token_res.expires_in,
+            account.token.email.clone(),
+            account.token.project_id.clone(), // Keep original project_id
+            None,                             // Add None as session_id
+            account.token.is_gcp_tos,
+        )
+        .with_oauth_client_key(
+            token_res
+                .oauth_client_key
+                .clone()
+                .or_else(|| account.token.oauth_client_key.clone()),
+        );
+
+        // Re-fetch display name
+        let name = if account.name.is_none()
+            || account.name.as_ref().is_some_and(|n| n.trim().is_empty())
+        {
+            match oauth::get_user_info(&token_res.access_token, Some(&account.id)).await {
+                Ok(user_info) => user_info.get_display_name(),
+                Err(_) => None,
+            }
+        } else {
+            account.name.clone()
+        };
+
+        account.token = new_token.clone();
+        account.name = name.clone();
+        upsert_account(account.email.clone(), name, new_token.clone())
+            .map_err(AppError::Account)?;
+
+        // Retry query
+        let retry_result: crate::error::AppResult<(QuotaData, Option<String>)> =
+            modules::fetch_quota(&new_token.access_token, &account.email, Some(&account.id)).await;
+
+        // Also handle project_id saving during retry
+        if let Ok((ref _q, ref project_id)) = retry_result {
+            if project_id.is_some() && *project_id != account.token.project_id {
+                modules::logger::log_info(&format!(
+                    "Detected update of project_id after retry ({}), saving...",
+                    account.email
+                ));
+                account.token.project_id = project_id.clone();
+                let _ = upsert_account(
+                    account.email.clone(),
+                    account.name.clone(),
+                    account.token.clone(),
+                );
+            }
+        }
+
+        if let Err(AppError::Network(_, Some(403))) = retry_result {
+            let mut q = QuotaData::new();
+            q.is_forbidden = true;
+            return Ok(q);
+        }
+
+        match retry_result {
+            Ok((q, _)) => {
+                clear_validation_blocked(account);
+                return Ok(q);
+            }
+            Err(e) => {
+                if is_validation_required_error(&e) {
+                    mark_validation_blocked(account, &e.to_string());
+                }
+                if let Some(cached) = recover_cached_quota_on_rate_limit(account, &e) {
+                    mark_validation_blocked(account, &format_rate_limit_block_reason(&e));
+                    modules::logger::log_warn(&format!(
+                        "Quota API rate-limited for {}, using cached model list as fallback",
+                        account.email
+                    ));
+                    return Ok(cached);
+                }
+                return Err(e);
+            }
+        }
+    }
 
     // fetch_quota already handles 403, with additional local fallback/validation handling.
     match result {

@@ -277,7 +277,7 @@ pub async fn fetch_quota_with_cache(
                     // ✅ Special handling for 403 Forbidden - return directly, no retry
                     if status == rquest::StatusCode::FORBIDDEN {
                         crate::modules::logger::log_warn(
-                            "Account unauthorized (403 Forbidden), marking as forbidden"
+                            "Account unauthorized (403 Forbidden), marking as forbidden",
                         );
                         let mut q = QuotaData::new();
                         q.is_forbidden = true;
@@ -664,10 +664,7 @@ pub async fn warm_up_all_accounts() -> Result<String, String> {
                         if let Ok((true, email, model)) = handle.await {
                             success += 1;
                             let history_key = format!("{}:{}:100", email, model);
-                            crate::modules::scheduler::record_warmup_history(
-                                &history_key,
-                                now_ts,
-                            );
+                            crate::modules::scheduler::record_warmup_history(&history_key, now_ts);
                         }
                     }
 

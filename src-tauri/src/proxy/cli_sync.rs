@@ -444,16 +444,16 @@ pub fn get_sync_status(app: &CliApp, proxy_url: &str) -> (bool, bool, Option<Str
                 }
             }
             CliApp::Codex => {
-                    if let Some(caps) = codex_re.captures(&content) {
-                        let url = &caps[1];
-                        current_base_url = Some(url.to_string());
-                        if url.trim_end_matches('/') != proxy_url.trim_end_matches('/') {
-                            all_synced = false;
-                        }
-                    } else {
+                if let Some(caps) = codex_re.captures(&content) {
+                    let url = &caps[1];
+                    current_base_url = Some(url.to_string());
+                    if url.trim_end_matches('/') != proxy_url.trim_end_matches('/') {
                         all_synced = false;
                     }
+                } else {
+                    all_synced = false;
                 }
+            }
             CliApp::Gemini => {
                 if file.name == ".env" {
                     if let Some(caps) = gemini_re.captures(&content) {

@@ -995,7 +995,10 @@ impl<'a> PartProcessor<'a> {
         // Gemini often hallucinates incorrect MCP tool names, e.g.:
         //   "mcp__puppeteer_navigate" instead of "mcp__puppeteer__puppeteer_navigate"
         // We attempt to find the closest registered tool name.
-        if tool_name.starts_with("mcp__") && !self.state.registered_tool_names.is_empty() && !self.state.registered_tool_names.contains(&tool_name) {
+        if tool_name.starts_with("mcp__")
+            && !self.state.registered_tool_names.is_empty()
+            && !self.state.registered_tool_names.contains(&tool_name)
+        {
             if let Some(matched) =
                 fuzzy_match_mcp_tool(&tool_name, &self.state.registered_tool_names)
             {

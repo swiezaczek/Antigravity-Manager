@@ -685,7 +685,7 @@ mod tests {
         let tracker = RateLimitTracker::new();
         tracker.parse_from_error("acc1", 429, Some("30"), "", None, &[]);
         let wait = tracker.get_remaining_wait("acc1", None);
-        assert!(wait > 25 && wait <= 30);
+        assert!((26..=30).contains(&wait));
     }
 
     #[test]
@@ -695,7 +695,7 @@ mod tests {
         tracker.parse_from_error("acc1", 429, Some("1"), "", None, &[]);
         let wait = tracker.get_remaining_wait("acc1", None);
         // Due to time passing, it might be 1 or 2
-        assert!(wait >= 1 && wait <= 2);
+        assert!((1..=2).contains(&wait));
     }
 
     #[test]
