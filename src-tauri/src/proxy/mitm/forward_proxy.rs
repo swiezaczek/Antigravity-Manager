@@ -210,17 +210,11 @@ async fn handle_tunneled_request(
     // [OPSEC] Process Unleash payloads to scrub instanceId from JSON body
     let mut spoofed_body = spoof_unleash_body(host, path, body, resolved_account_id.as_deref());
 
-    // [OPSEC V15] Replace product identifiers in body, rather than dropping
-    if !spoofed_body.is_empty() && path.contains("/v1internal") {
-        let body_str = String::from_utf8_lossy(&spoofed_body);
-        if body_str.contains("antigravity") {
-            let replaced = body_str.replace("antigravity_desktop", "vscode_desktop").replace("antigravity", "vscode");
-            spoofed_body = replaced.into_bytes();
-            tracing::info!("[MITM] ⚠️ Body contained product identifier — spoofed to vscode for {} {}", host, path);
-        }
-    }
+    // [OPSEC Fix] REMOVED: Body spoofing of "antigravity" → "vscode" was counter-productive.
+    // Official MITM capture proves the canonical client sends "antigravity" in all v1internal bodies.
+    // Replacing it created a fingerprint mismatch that triggered 403s.
 
-    // [OPSEC 7.5] Recalculate Content-Length after body spoofing to prevent mismatch
+    // [OPSEC 7.5] Recalculate Content-Length after body spoofing (Unleash instanceId etc.)
     if spoofed_body.len() != content_length {
         for h in spoofed_headers.iter_mut() {
             if h.to_lowercase().starts_with("content-length:") {
@@ -229,22 +223,8 @@ async fn handle_tunneled_request(
         }
     }
 
-    // [OPSEC V14] Safety net: drop any protobuf/unknown traffic that contains product identifiers
-    // This catches Clearcut payloads even if Go LS resolves to unmapped IP addresses.
-    if !spoofed_body.is_empty() {
-        let body_preview = String::from_utf8_lossy(&spoofed_body);
-        if body_preview.contains("antigravity") {
-            tracing::warn!("[MITM] ⚠️ Body contains product identifier — force dropping: {} {}", host, path);
-            let response = if path.contains("/log") || host.contains("play.googleapis.com") {
-                "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n".to_string()
-            } else {
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=UTF-8\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\n{}".to_string()
-            };
-            tls_stream.write_all(response.as_bytes()).await?;
-            tls_stream.flush().await?;
-            return Ok(keep_alive);
-        }
-    }
+    // [OPSEC Fix] REMOVED: Safety-net force-drop of traffic containing "antigravity" was
+    // counter-productive. The canonical client uses "antigravity" as its product identifier.
 
     // 5. Apply rules
     let action = rules::evaluate(host, path);

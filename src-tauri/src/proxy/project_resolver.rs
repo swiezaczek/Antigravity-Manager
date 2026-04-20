@@ -6,12 +6,12 @@ pub async fn fetch_project_id(access_token: &str) -> Result<String, String> {
     // [OPSEC v4.1.32] Changed from Sandbox to Prod (original client NEVER hits sandbox)
     let url = "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist";
     
-    // [OPSEC Phase 3] MITM confirmed ide_type: "ANTIGRAVITY" leaked in deep_loadcode.txt
+    // [OPSEC Fix] Canonical MITM confirms official client sends ANTIGRAVITY, not VSCODE
     let request_body = serde_json::json!({
         "metadata": {
-            "ide_type": "VSCODE",
-            "ide_version": "1.95.1",
-            "ide_name": "vscode"
+            "ide_type": "ANTIGRAVITY",
+            "ide_version": "1.22.2",
+            "ide_name": "antigravity"
         }
     });
     
@@ -48,13 +48,13 @@ pub async fn fetch_project_id(access_token: &str) -> Result<String, String> {
     let access_token_clone = access_token.to_string();
     
     tokio::spawn(async move {
-        // [OPSEC Phase 3] Matching quota.rs onboard fix
+        // [OPSEC Fix] Canonical MITM confirms ANTIGRAVITY metadata
         let onboard_meta = serde_json::json!({
             "tier_id": tier_for_onboard,
             "metadata": {
-                "ide_type": "VSCODE",
-                "ide_version": "1.95.1",
-                "ide_name": "vscode"
+                "ide_type": "ANTIGRAVITY",
+                "ide_version": "1.22.2",
+                "ide_name": "antigravity"
             }
         });
         

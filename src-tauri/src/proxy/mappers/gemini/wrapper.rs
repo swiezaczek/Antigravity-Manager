@@ -593,9 +593,9 @@ pub fn wrap_request(
     let seq_num = crate::proxy::common::session::next_sequence_number(account_id);
     let official_request_id = format!("agent/{}/{}/{}", chrono::Utc::now().timestamp_millis(), derived_sid, seq_num);
 
-    // [NEW] 阶段 7.2: 动态 IDEType 指纹对齐
-    let official_ide_type = if is_enterprise { "JETSKI" } else { "VSCODE" };
-    let official_user_agent = if is_enterprise { "jetski" } else { "vscode" };
+    // [OPSEC Fix] Canonical MITM confirms official client uses ANTIGRAVITY, not VSCODE
+    let official_ide_type = if is_enterprise { "JETSKI" } else { "ANTIGRAVITY" };
+    let official_user_agent = if is_enterprise { "jetski" } else { "antigravity" };
 
     // [NEW] 如果是 loadCodeAssist 请求，注入 metadata 字段对齐官方
     if final_model_name == "loadCodeAssist" || inner_request.get("metadata").is_some() {

@@ -73,7 +73,8 @@ pub fn google_api_headers(access_token: &str) -> HeaderMap {
         HeaderName::from_static("user-agent"),
         HeaderValue::from_str(ua).unwrap_or_else(|_| HeaderValue::from_static("google-api-nodejs-client/10.3.0")),
     ); // [OPSEC] Wektor T Fallback CleanUp
-    h.insert(HeaderName::from_static("x-goog-api-client"), HeaderValue::from_static("gl-node/20.18.0"));
+    // [OPSEC Fix] Canonical MITM capture shows gl-node/22.21.1 (not 20.18.0)
+    h.insert(HeaderName::from_static("x-goog-api-client"), HeaderValue::from_static("gl-node/22.21.1"));
     h.insert(HeaderName::from_static("connection"), HeaderValue::from_static("keep-alive"));
     h
 }

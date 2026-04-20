@@ -203,10 +203,11 @@ pub static NATIVE_OAUTH_USER_AGENT: LazyLock<String> = LazyLock::new(|| {
         "linux" => "linux/amd64",
         _ => "linux/amd64",
     };
-    // [OPSEC Phase 3] Removed "antigravity/" prefix — MITM confirmed this leaked in EVERY
-    // loadCodeAssist, onboardUser, fetchUserInfo, OAuth /token request to Google.
-    // Now matches canonical Node.js client fingerprint exactly.
-    format!("google-api-nodejs-client/10.3.0")
+    // [OPSEC Fix] Official MITM capture confirms the canonical client DOES send
+    // "antigravity/1.22.2 windows/amd64 google-api-nodejs-client/10.3.0" on all
+    // Node.js gaxios calls (loadCodeAssist, onboardUser, fetchUserInfo, etc.).
+    // Stripping this prefix caused a fingerprint mismatch triggering 403s.
+    format!("antigravity/{} {} google-api-nodejs-client/10.3.0", KNOWN_STABLE_VERSION, platform_info)
 });
 
 /// Native Go Language Server User-Agent (for streamGenerateContent)
@@ -220,7 +221,8 @@ pub static GO_LS_USER_AGENT: LazyLock<String> = LazyLock::new(|| {
         "linux" => "linux/amd64",
         _ => "linux/amd64",
     };
-    format!("cloudcode/1.22.2 {}", platform_info)
+    // [OPSEC Fix] Official MITM shows Go LS uses "antigravity/1.22.2 windows/amd64"
+    format!("antigravity/{} {}", KNOWN_STABLE_VERSION, platform_info)
 });
 
 /// Platform identifier for telemetry metadata (matches Go LS format: "WINDOWS_AMD64", "MAC_ARM64", etc.)
@@ -259,8 +261,8 @@ pub fn get_default_user_agent() -> String {
         "linux" => "linux/amd64",
         _ => "linux/amd64",
     };
-    // [OPSEC Phase 3] Removed "antigravity/" prefix to match canonical fingerprint
-    format!("google-api-nodejs-client/10.3.0")
+    // [OPSEC Fix] Restored canonical antigravity/ prefix
+    format!("antigravity/{} {} google-api-nodejs-client/10.3.0", KNOWN_STABLE_VERSION, platform_info)
 }
 
 /// Global Session ID (generated once per app launch)
@@ -282,8 +284,8 @@ pub static USER_AGENT: LazyLock<String> = LazyLock::new(|| {
         _ => "linux/amd64",
     };
 
-    // [OPSEC Phase 3] Removed "antigravity/" prefix — upstream client.rs uses this for ALL requests
-    let ua = format!("google-api-nodejs-client/10.3.0");
+    // [OPSEC Fix] Restored canonical antigravity/ prefix
+    let ua = format!("antigravity/{} {} google-api-nodejs-client/10.3.0", KNOWN_STABLE_VERSION, platform_info);
     ua
 });
 

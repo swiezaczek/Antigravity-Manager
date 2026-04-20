@@ -121,11 +121,11 @@ async fn fetch_project_id(access_token: &str, email: &str, account_id: Option<&s
     let client = create_standard_client(account_id).await;
     let meta = json!({
         "metadata": {
-            "ide_type": "VSCODE",
-            "ide_version": "1.95.1",
-            "ide_name": "vscode"
+            "ide_type": "ANTIGRAVITY",
+            "ide_version": "1.22.2",
+            "ide_name": "antigravity"
         }
-    }); // [OPSEC] Version synced with generic VS Code to mask Antigravity proxy
+    }); // [OPSEC Fix] Canonical MITM confirms official client sends ANTIGRAVITY, not VSCODE
 
     // [OPSEC v4.1.32] Use centralized google_api_headers() for consistent fingerprint
     let headers = crate::utils::http::google_api_headers(access_token);
@@ -161,9 +161,9 @@ async fn fetch_project_id(access_token: &str, email: &str, account_id: Option<&s
                         let onboard_meta = json!({
                             "tier_id": tier_for_onboard,
                             "metadata": {
-                                "ide_type": "VSCODE",
-                                "ide_version": "1.95.1",
-                                "ide_name": "vscode"
+                                "ide_type": "ANTIGRAVITY",
+                                "ide_version": "1.22.2",
+                                "ide_name": "antigravity"
                             }
                         });
                         // [OPSEC v4.1.32] Use centralized headers
