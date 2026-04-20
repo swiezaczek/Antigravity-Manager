@@ -621,15 +621,15 @@ pub async fn handle_generate(
 
             // 判断是否需要轮换账号
         // 判断是否需要轮换账号
-        let mut force_rotate = false;
+        let mut _force_rotate = false;
         if !should_rotate_account(status_code, Some(&strategy)) {
             debug!(
                 "[{}] Keeping same account for status {} (Gemini server-side issue or Grace Retry)",
                 trace_id, status_code
             );
-            force_rotate = false;
+            _force_rotate = false;
         } else {
-            force_rotate = true;
+            _force_rotate = true;
         }
         }
 

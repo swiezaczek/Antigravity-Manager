@@ -1326,14 +1326,14 @@ pub async fn handle_messages(
         let retry_strategy = determine_retry_strategy(status_code, &error_text, retried_without_thinking);
         
         // 执行退避
-        let mut force_rotate = false;
+        let mut _force_rotate = false;
         if apply_retry_strategy(retry_strategy.clone(), attempt, max_attempts, status_code, &trace_id).await {
             // 判断是否需要轮换账号
             if !should_rotate_account(status_code, Some(&retry_strategy)) {
                 debug!("[{}] Keeping same account for status {} (Grace Retry or Server Issue)", trace_id, status_code);
-                force_rotate = false;
+                _force_rotate = false;
             } else {
-                force_rotate = true;
+                _force_rotate = true;
             }
             continue;
         } else {

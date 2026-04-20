@@ -3,7 +3,7 @@ use serde_json;
 
 use crate::models::AppConfig;
 use super::account::get_data_dir;
-use tracing::warn;
+
 
 const CONFIG_FILE: &str = "gui_config.json";
 

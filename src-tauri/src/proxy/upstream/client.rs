@@ -297,7 +297,7 @@ impl UpstreamClient {
         body: Value,
         query_string: Option<&str>,
         extra_headers: std::collections::HashMap<String, String>,
-        account_id: Option<&str>, device_profile: Option<crate::models::account::DeviceProfile>,
+        account_id: Option<&str>, _device_profile: Option<crate::models::account::DeviceProfile>,
     ) -> Result<UpstreamCallResult, String> {
         // [NEW] Get client based on account (cached in proxy pool manager)
         let client = self.get_client(account_id).await;

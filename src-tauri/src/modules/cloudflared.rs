@@ -8,7 +8,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 #[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
+
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;

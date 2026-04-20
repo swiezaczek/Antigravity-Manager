@@ -55,7 +55,7 @@ pub fn get_long_client() -> Client {
 }
 
 /// Base client creation logic strictly WITHOUT JA3 Emulation (Pure Native)
-fn create_standard_client(timeout_secs: u64) -> Client {
+pub fn create_standard_client(timeout_secs: u64) -> Client {
     let mut builder = Client::builder()
         // No .emulation(Emulation::Chrome123) here!
         .timeout(std::time::Duration::from_secs(timeout_secs));

@@ -8,7 +8,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use uuid::Uuid;
-use chrono::{Utc, Local, Timelike, FixedOffset};
+use chrono::{Utc, Timelike, FixedOffset};
 
 /// 用户令牌结构体
 #[derive(Debug, Clone, Serialize, Deserialize)]
