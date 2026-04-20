@@ -221,7 +221,7 @@ async fn handle_tunneled_request(
     if is_ai_or_assist_payload && !body.is_empty() {
         if let Ok(mut stringified_body) = String::from_utf8(body.clone()) {
             if stringified_body.contains("file:///") {
-                let re = regex::Regex::new(r"(?i)file:///(?:[A-Za-z](?:%3A|:)[/\\]|/)(?:[^/&?#\s"'\\]+[/\\])+([^/&?#\s"'\\]+)").unwrap();
+                let re = regex::Regex::new(r#"(?i)file:///(?:[A-Za-z](?:%3A|:)[/\\]|/)(?:[^/&?#\s"'\\]+[/\\])+([^/&?#\s"'\\]+)"#).unwrap();
                 stringified_body = re.replace_all(&stringified_body, "file:///workspace/$1").into_owned();
                 body = stringified_body.into_bytes();
                 modified_body = true;
