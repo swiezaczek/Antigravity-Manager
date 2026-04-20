@@ -94,23 +94,9 @@ impl ProxyPoolManager {
             return client.clone();
         }
 
-        // [OPSEC Phase Z] Strict Node.JS Gaxios Header canonical ordering
-        let gaxios_order = &[
-            rquest::header::ACCEPT,
-            rquest::header::ACCEPT_ENCODING,
-            rquest::header::AUTHORIZATION,
-            rquest::header::CONTENT_TYPE,
-            rquest::header::USER_AGENT,
-            rquest::header::HeaderName::from_static("x-goog-api-client"),
-            rquest::header::CONTENT_LENGTH,
-            rquest::header::CONNECTION,
-            rquest::header::HOST,
-        ];
-
         let mut builder = Client::builder()
             // [OPSEC] No emulation, force HTTP/1.1 to match Node.js MITM fingerprint
             .http1_only()
-            .headers_order(gaxios_order) // [OPSEC] Enforce Node.js header ordering sequence
             .timeout(Duration::from_secs(timeout_secs));
 
         if account_id.is_none() {
@@ -173,26 +159,12 @@ impl ProxyPoolManager {
             return client.clone();
         }
 
-        // [OPSEC Phase Z] Strict Node.JS Gaxios Header canonical ordering
-        let gaxios_order = &[
-            rquest::header::ACCEPT,
-            rquest::header::ACCEPT_ENCODING,
-            rquest::header::AUTHORIZATION,
-            rquest::header::CONTENT_TYPE,
-            rquest::header::USER_AGENT,
-            rquest::header::HeaderName::from_static("x-goog-api-client"),
-            rquest::header::CONTENT_LENGTH,
-            rquest::header::CONNECTION,
-            rquest::header::HOST,
-        ];
-
         let mut builder = Client::builder()
             .timeout(Duration::from_secs(timeout_secs));
             
         if !allow_http2 {
             // [OPSEC] For Node.js (gaxios) traffic, enforce HTTP/1.1
             builder = builder.http1_only();
-            builder = builder.headers_order(gaxios_order); // [OPSEC] Enforce Node.js header ordering sequence
         }
             
         if account_id.is_none() {
@@ -239,22 +211,7 @@ impl ProxyPoolManager {
 
         let new_client = builder.build().unwrap_or_else(|_| {
             let mut fb = Client::builder().timeout(Duration::from_secs(timeout_secs));
-            if !allow_http2 { 
-                fb = fb.http1_only(); 
-                // [OPSEC Phase Z] Strict Node.JS Gaxios Header canonical ordering
-                let gaxios_order = &[
-                    rquest::header::ACCEPT,
-                    rquest::header::ACCEPT_ENCODING,
-                    rquest::header::AUTHORIZATION,
-                    rquest::header::CONTENT_TYPE,
-                    rquest::header::USER_AGENT,
-                    rquest::header::HeaderName::from_static("x-goog-api-client"),
-                    rquest::header::CONTENT_LENGTH,
-                    rquest::header::CONNECTION,
-                    rquest::header::HOST,
-                ];
-                fb = fb.headers_order(gaxios_order);
-            }
+            if !allow_http2 { fb = fb.http1_only(); }
             fb.build().expect("critical: fallback standard client build failed")
         });
         if account_id.is_some() {
