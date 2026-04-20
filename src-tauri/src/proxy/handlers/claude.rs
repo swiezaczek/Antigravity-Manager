@@ -1802,7 +1802,13 @@ async fn call_gemini_sync(
     
     debug!("[{}] Calling Gemini API: {}", trace_id, model);
     
-    let response = reqwest::Client::new()
+    let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
+        pool.get_effective_client(Some(&account_id), 60).await
+    } else {
+        crate::utils::http::create_standard_client(60)
+    };
+    
+    let response = client
         .post(&upstream_url)
         .header("Authorization", format!("Bearer {}", access_token))
         .header("Content-Type", "application/json")

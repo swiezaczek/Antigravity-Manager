@@ -118,43 +118,6 @@ const SmartWarmup: React.FC<SmartWarmupProps> = ({ config, onChange }) => {
                                 {t('settings.quota_protection.monitored_models_desc', '勾选需要监控的模型。当选中的任一模型利用率跌破阈值时，将触发保护')}
                             </p>
                         </div>
-                        
-                        <div className="pt-2">
-                            <label className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest block mb-2">
-                                {t('settings.warmup.jitter_label', 'OPSEC Jitter Delay (sekundy)')}
-                            </label>
-                            <div className="flex items-center gap-4">
-                                <div className="flex-1">
-                                    <div className="flex justify-between text-[10px] text-gray-400 mb-1">
-                                        <span>Min: {config.min_jitter_secs ?? 30}s</span>
-                                    </div>
-                                    <input
-                                        type="range"
-                                        min="10"
-                                        max="60"
-                                        value={config.min_jitter_secs ?? 30}
-                                        onChange={(e) => onChange({ ...config, min_jitter_secs: parseInt(e.target.value) })}
-                                        className="w-full h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700 accent-orange-500"
-                                    />
-                                </div>
-                                <div className="flex-1">
-                                    <div className="flex justify-between text-[10px] text-gray-400 mb-1">
-                                        <span>Max: {config.max_jitter_secs ?? 120}s</span>
-                                    </div>
-                                    <input
-                                        type="range"
-                                        min="60"
-                                        max="300"
-                                        value={config.max_jitter_secs ?? 120}
-                                        onChange={(e) => onChange({ ...config, max_jitter_secs: parseInt(e.target.value) })}
-                                        className="w-full h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700 accent-orange-500"
-                                    />
-                                </div>
-                            </div>
-                            <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-2 leading-relaxed">
-                                {t('settings.warmup.jitter_desc', 'Losowe opóźnienie między żądaniami odświeżania kont (Jitter). Chroni przed wykryciem wielowątkowych botów przez WAF.')}
-                            </p>
-                        </div>
                     </div>
                 </div>
             )}

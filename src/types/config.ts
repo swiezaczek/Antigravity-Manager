@@ -99,8 +99,6 @@ export interface ZaiConfig {
 export interface ScheduledWarmupConfig {
     enabled: boolean;
     monitored_models: string[];
-    min_jitter_secs: number;
-    max_jitter_secs: number;
 }
 
 export interface QuotaProtectionConfig {

@@ -121,15 +121,3 @@ jobs:
           # CI 环境不需要签名
           TAURI_SIGNING_PRIVATE_KEY: ""
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: Antigravity-Manager-${{ matrix.platform }}
-          path: |
-            src-tauri/target/**/debug/bundle/msi/*.msi
-            src-tauri/target/**/debug/bundle/nsis/*.exe
-            src-tauri/target/**/debug/bundle/dmg/*.dmg
-            src-tauri/target/**/debug/bundle/deb/*.deb
-            src-tauri/target/**/debug/bundle/appimage/*.AppImage
-          if-no-files-found: warn
