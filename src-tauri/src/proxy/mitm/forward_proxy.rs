@@ -516,7 +516,8 @@ async fn forward_to_upstream_with_proxy(
     // Unleash (api/client) and Clearcut (/log) use HTTP/2 natively via Go LS.
     // v1internal is Node.js and must stay HTTP/1.1.
     let allow_http2 = path.contains("/api/client") || path.contains("/log") || host.contains("play.googleapis.com");
-    let client = proxy_pool.get_effective_standard_client(account_id, 30, allow_http2).await;
+    let is_go_ls = headers.iter().any(|h| h.to_lowercase().starts_with("user-agent:") && !h.to_lowercase().contains("nodejs"));
+    let client = proxy_pool.get_effective_standard_client(account_id, 30, allow_http2, is_go_ls).await;
     
     // [FIX] Rewrite spoofed local hosts back to canonical Google hosts for upstream resolution
     let real_host = match host {

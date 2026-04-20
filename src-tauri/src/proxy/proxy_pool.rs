@@ -84,10 +84,10 @@ impl ProxyPoolManager {
     /// 1. 账号显式绑定代理优先 (Account-Proxy Binding)
     /// 2. 如果无绑定，且开启了“自动全局”，取池中第一个节点
     /// 3. 如果以上均无，则检查全局上游代理 (Upstream Proxy) [由调用方 fallback]
-    pub async fn get_effective_client(&self, account_id: Option<&str>, timeout_secs: u64) -> Client {
+    pub async fn get_effective_client(&self, account_id: Option<&str>, timeout_secs: u64, is_go_ls: bool) -> Client {
         let cache_key = match account_id {
-            Some(id) => format!("{}:{}", id, timeout_secs),
-            None => format!("generic:{}", timeout_secs),
+            Some(id) => format!("{}:{}:{}", id, timeout_secs, is_go_ls),
+            None => format!("generic:{}:{}", timeout_secs, is_go_ls),
         };
 
         if let Some(client) = self.account_client_cache.get(&cache_key) {
@@ -98,6 +98,31 @@ impl ProxyPoolManager {
             // [OPSEC] No emulation, force HTTP/1.1 to match Node.js MITM fingerprint
             .http1_only()
             .timeout(Duration::from_secs(timeout_secs));
+
+        if is_go_ls {
+            let go_order = &[
+                rquest::header::HOST,
+                rquest::header::USER_AGENT,
+                rquest::header::CONTENT_LENGTH,
+                rquest::header::AUTHORIZATION,
+                rquest::header::CONTENT_TYPE,
+                rquest::header::ACCEPT_ENCODING,
+            ];
+            builder = builder.headers_order(go_order);
+        } else {
+            let gaxios_order = &[
+                rquest::header::ACCEPT,
+                rquest::header::ACCEPT_ENCODING,
+                rquest::header::AUTHORIZATION,
+                rquest::header::CONTENT_LENGTH,
+                rquest::header::CONTENT_TYPE,
+                rquest::header::USER_AGENT,
+                rquest::header::HeaderName::from_static("x-goog-api-client"),
+                rquest::header::HOST,
+                rquest::header::CONNECTION,
+            ];
+            builder = builder.headers_order(gaxios_order);
+        }
 
         if account_id.is_none() {
             // [OPSEC] Prevent connection pooling for unauthenticated generic requests to stop Google tracking identical TLS sessions
@@ -149,10 +174,10 @@ impl ProxyPoolManager {
     }
 
     /// [NEW] 为指定账号获取“最终生效”的无特征 Standard HttpClient (专门用于纯净场景，如 OAuth 退还)
-    pub async fn get_effective_standard_client(&self, account_id: Option<&str>, timeout_secs: u64, allow_http2: bool) -> Client {
+    pub async fn get_effective_standard_client(&self, account_id: Option<&str>, timeout_secs: u64, allow_http2: bool, is_go_ls: bool) -> Client {
         let cache_key = match account_id {
-            Some(id) => format!("{}:{}:{}", id, timeout_secs, allow_http2),
-            None => format!("generic:{}:{}", timeout_secs, allow_http2),
+            Some(id) => format!("{}:{}:{}:{}", id, timeout_secs, allow_http2, is_go_ls),
+            None => format!("generic:{}:{}:{}", timeout_secs, allow_http2, is_go_ls),
         };
 
         if let Some(client) = self.account_standard_cache.get(&cache_key) {
@@ -163,8 +188,32 @@ impl ProxyPoolManager {
             .timeout(Duration::from_secs(timeout_secs));
             
         if !allow_http2 {
-            // [OPSEC] For Node.js (gaxios) traffic, enforce HTTP/1.1
             builder = builder.http1_only();
+        }
+
+        if is_go_ls {
+            let go_order = &[
+                rquest::header::HOST,
+                rquest::header::USER_AGENT,
+                rquest::header::CONTENT_LENGTH,
+                rquest::header::AUTHORIZATION,
+                rquest::header::CONTENT_TYPE,
+                rquest::header::ACCEPT_ENCODING,
+            ];
+            builder = builder.headers_order(go_order);
+        } else {
+            let gaxios_order = &[
+                rquest::header::ACCEPT,
+                rquest::header::ACCEPT_ENCODING,
+                rquest::header::AUTHORIZATION,
+                rquest::header::CONTENT_LENGTH,
+                rquest::header::CONTENT_TYPE,
+                rquest::header::USER_AGENT,
+                rquest::header::HeaderName::from_static("x-goog-api-client"),
+                rquest::header::HOST,
+                rquest::header::CONNECTION,
+            ];
+            builder = builder.headers_order(gaxios_order);
         }
             
         if account_id.is_none() {

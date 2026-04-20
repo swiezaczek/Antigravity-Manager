@@ -83,14 +83,14 @@ impl UpstreamClient {
         proxy_config: Option<crate::proxy::config::UpstreamProxyConfig>,
         proxy_pool: Option<Arc<crate::proxy::proxy_pool::ProxyPoolManager>>,
     ) -> Self {
-        let default_client = match Self::build_client_internal(proxy_config.clone()) {
+        let default_client = match Self::build_client_internal(proxy_config.clone(), false) {
             Ok(client) => client,
             Err(err_with_proxy) => {
                 tracing::error!(
                     error = %err_with_proxy,
                     "Failed to create default HTTP client with configured upstream proxy; retrying without proxy"
                 );
-                match Self::build_client_internal(None) {
+                match Self::build_client_internal(None, false) {
                     Ok(client) => client,
                     Err(err_without_proxy) => {
                         tracing::error!(
@@ -114,19 +114,41 @@ impl UpstreamClient {
     /// Internal helper to build a client with optional upstream proxy config
     fn build_client_internal(
         proxy_config: Option<crate::proxy::config::UpstreamProxyConfig>,
+        is_go_ls: bool,
     ) -> Result<Client, rquest::Error> {
         let mut builder = Client::builder()
-            // [OPSEC] NO Chrome123 emulation! The original Antigravity plugin is Node.js,
-            // not Chrome. Using Chrome TLS fingerprint with Node.js User-Agent headers
-            // creates an instantly detectable contradiction for Google WAF.
-            // Pure rquest (BoringSSL) fingerprint is closer to Node.js (OpenSSL) than Chrome.
-            .http1_only() // [OPSEC] Force HTTP/1.1 to match Node.js gaxios (Connection: keep-alive)
-            // Connection settings
+            .http1_only()
             .connect_timeout(Duration::from_secs(20))
-            .pool_max_idle_per_host(20) // 每主机最多 20 个空闲连接 (对齐官方指纹)
-            .pool_idle_timeout(Duration::from_secs(90)) // 空闲连接保持 90 秒
-            .tcp_keepalive(Duration::from_secs(60)) // TCP 保活探测 60 秒
+            .pool_max_idle_per_host(20)
+            .pool_idle_timeout(Duration::from_secs(90))
+            .tcp_keepalive(Duration::from_secs(60))
             .timeout(Duration::from_secs(600));
+
+        // [OPSEC Phase Z] Apply strict canonical ordering based on IDE client type
+        if is_go_ls {
+            let go_order = &[
+                header::HOST,
+                header::USER_AGENT,
+                header::CONTENT_LENGTH,
+                header::AUTHORIZATION,
+                header::CONTENT_TYPE,
+                header::ACCEPT_ENCODING,
+            ];
+            builder = builder.headers_order(go_order);
+        } else {
+            let gaxios_order = &[
+                header::ACCEPT,
+                header::ACCEPT_ENCODING,
+                header::AUTHORIZATION,
+                header::CONTENT_LENGTH,
+                header::CONTENT_TYPE,
+                header::USER_AGENT,
+                header::HeaderName::from_static("x-goog-api-client"),
+                header::HOST,
+                header::CONNECTION,
+            ];
+            builder = builder.headers_order(gaxios_order);
+        }
 
         builder = Self::apply_default_user_agent(builder);
 
@@ -147,17 +169,41 @@ impl UpstreamClient {
     fn build_client_with_proxy(
         &self,
         proxy_config: crate::proxy::proxy_pool::PoolProxyConfig,
+        is_go_ls: bool,
     ) -> Result<Client, rquest::Error> {
-        // Reuse base settings similar to default client but with specific proxy
-        let builder = Client::builder()
-            // [OPSEC] NO Chrome123 emulation — must match Node.js transport fingerprint
-            .http1_only() // [OPSEC] Force HTTP/1.1 per MITM Connection: close pattern
+        let mut builder = Client::builder()
+            .http1_only()
             .connect_timeout(Duration::from_secs(20))
             .pool_max_idle_per_host(20)
             .pool_idle_timeout(Duration::from_secs(90))
             .tcp_keepalive(Duration::from_secs(60))
             .timeout(Duration::from_secs(600))
-            .proxy(proxy_config.proxy); // Apply the specific proxy
+            .proxy(proxy_config.proxy);
+
+        if is_go_ls {
+            let go_order = &[
+                header::HOST,
+                header::USER_AGENT,
+                header::CONTENT_LENGTH,
+                header::AUTHORIZATION,
+                header::CONTENT_TYPE,
+                header::ACCEPT_ENCODING,
+            ];
+            builder = builder.headers_order(go_order);
+        } else {
+            let gaxios_order = &[
+                header::ACCEPT,
+                header::ACCEPT_ENCODING,
+                header::AUTHORIZATION,
+                header::CONTENT_LENGTH,
+                header::CONTENT_TYPE,
+                header::USER_AGENT,
+                header::HeaderName::from_static("x-goog-api-client"),
+                header::HOST,
+                header::CONNECTION,
+            ];
+            builder = builder.headers_order(gaxios_order);
+        }
 
         Self::apply_default_user_agent(builder).build()
     }
@@ -199,7 +245,8 @@ impl UpstreamClient {
                             return client.clone();
                         }
                         // Build new client and cache it
-                        match self.build_client_with_proxy(proxy_cfg.clone()) {
+                        // REST API via proxy_pool defaults to NodeJS behavior
+                        match self.build_client_with_proxy(proxy_cfg.clone(), false) {
                             Ok(client) => {
                                 self.client_cache
                                     .insert(acc_id.to_string(), client.clone());
