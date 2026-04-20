@@ -212,6 +212,23 @@ async fn handle_tunneled_request(
     // [OPSEC] Spoof/Scrub tracking headers using DeviceProfile 
     let mut spoofed_headers = spoof_headers(headers.clone(), resolved_account_id.as_deref());
 
+    // [OPSEC Fix] Bezpośrednie maskowanie Windowsowych ścieżek przestrzeni roboczej z użyciem Regex
+    // AI wysyła pełne uri, np: file:///c:/Users/ag/... Korelacja tych unikalnych ścieżek niszczy izolację kont.
+    // Zastępujemy je wszystkie na generyczne file:///workspace/ w bezpieczny strumieniowy sposób.
+    // LIMITATION: Tylko text/json (generateContent i podobne), zeby nie uszkodzic Protobuf!
+    let is_ai_or_assist_payload = path.contains("generateContent") || path.contains("CodeAssist") || path.contains("chat");
+    let mut modified_body = false;
+    if is_ai_or_assist_payload && !body.is_empty() {
+        if let Ok(mut stringified_body) = String::from_utf8(body.clone()) {
+            if stringified_body.contains("file:///") {
+                let re = regex::Regex::new(r"(?i)file:///(?:[A-Za-z](?:%3A|:)[/\\]|/)(?:[^/&?#\s"'\\]+[/\\])+([^/&?#\s"'\\]+)").unwrap();
+                stringified_body = re.replace_all(&stringified_body, "file:///workspace/$1").into_owned();
+                body = stringified_body.into_bytes();
+                modified_body = true;
+            }
+        }
+    }
+
     // [OPSEC] Process Unleash payloads to scrub instanceId from JSON body
     let mut spoofed_body = spoof_unleash_body(host, path, body, resolved_account_id.as_deref());
 
@@ -826,6 +843,20 @@ fn rewrite_agent_telemetry(mut headers: Vec<String>, body: Vec<u8>) -> (Vec<Stri
                     }
                     if obj.contains_key("vscodeSessionId") {
                         obj.insert("vscodeSessionId".to_string(), serde_json::json!(spoof_session));
+                    }
+
+                    // [OPSEC - ID Masking] Masking VS Code workspaceId correlation
+                    // Trashing or hiding VS Code WorkspaceID causes the telemetry signature to stand out.
+                    // Instead, calculate a stable pseudo-workspace ID for this Account.
+                    if obj.contains_key("workspaceId") || obj.contains_key("workspace") {
+                        let acct_hash = spoof_session; // reusing the spoofed session UUID as seed since it is bounded to account
+                        let workspace_uuid_spoof = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, acct_hash.as_bytes()).to_string();
+                        if obj.contains_key("workspaceId") {
+                            obj.insert("workspaceId".to_string(), serde_json::json!(workspace_uuid_spoof));
+                        }
+                        if obj.contains_key("workspace") {
+                            obj.insert("workspace".to_string(), serde_json::json!(workspace_uuid_spoof));
+                        }
                     }
 
                     // Remove workspace/file paths (can't meaningfully spoof, reveals code)

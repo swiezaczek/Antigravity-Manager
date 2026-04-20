@@ -231,10 +231,7 @@ pub fn parse_image_config_with_params(
 
     let clean_model_name = clean_image_model_name(model_name);
 
-    (
-        serde_json::Value::Object(config),
-        clean_model_name,
-    )
+    (serde_json::Value::Object(config), clean_model_name)
 }
 
 /// Helper function to clean image model names by removing resolution/aspect-ratio suffixes.
@@ -244,11 +241,32 @@ fn clean_image_model_name(model_name: &str) -> String {
     
     // Ordered list of known suffixes to strip
     let suffixes = [
-        "-4k", "-2k", "-1k", "-hd", "-standard", "-medium",
-        "-21x9", "-21-9", "-16x9", "-16-9", "-9x16", "-9-16",
-        "-4x3", "-4-3", "-3x4", "-3-4", "-3x2", "-3-2",
-        "-2x3", "-2-3", "-5x4", "-5-4", "-4x5", "-4-5",
-        "-1x1", "-1-1"
+        "-4k",
+        "-2k",
+        "-1k",
+        "-hd",
+        "-standard",
+        "-medium",
+        "-21x9",
+        "-21-9",
+        "-16x9",
+        "-16-9",
+        "-9x16",
+        "-9-16",
+        "-4x3",
+        "-4-3",
+        "-3x4",
+        "-3-4",
+        "-3x2",
+        "-3-2",
+        "-2x3",
+        "-2-3",
+        "-5x4",
+        "-5-4",
+        "-4x5",
+        "-4-5",
+        "-1x1",
+        "-1-1",
     ];
 
     // Repeatedly strip suffixes until no more are found
@@ -509,8 +527,12 @@ pub fn contains_non_networking_tool(tools: &Option<Vec<Value>>) -> bool {
                 if let Some(decls) = tool.get("functionDeclarations").and_then(|v| v.as_array()) {
                     for decl in decls {
                         if let Some(n) = decl.get("name").and_then(|v| v.as_str()) {
-                            let keywords =
-                                ["web_search", "google_search", "google_search_retrieval", "builtin_web_search"];
+                            let keywords = [
+                                "web_search",
+                                "google_search",
+                                "google_search_retrieval",
+                                "builtin_web_search",
+                            ];
                             if !keywords.contains(&n) {
                                 return true; // 发现本地函数
                             }
