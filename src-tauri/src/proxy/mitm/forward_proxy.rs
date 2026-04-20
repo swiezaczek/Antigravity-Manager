@@ -208,7 +208,17 @@ async fn handle_tunneled_request(
     let mut spoofed_headers = spoof_headers(headers.clone(), resolved_account_id.as_deref());
 
     // [OPSEC] Process Unleash payloads to scrub instanceId from JSON body
-    let spoofed_body = spoof_unleash_body(host, path, body, resolved_account_id.as_deref());
+    let mut spoofed_body = spoof_unleash_body(host, path, body, resolved_account_id.as_deref());
+
+    // [OPSEC V15] Replace product identifiers in body, rather than dropping
+    if !spoofed_body.is_empty() && path.contains("/v1internal") {
+        let body_str = String::from_utf8_lossy(&spoofed_body);
+        if body_str.contains("antigravity") || body_str.contains("antigravity_desktop") {
+            let replaced = body_str.replace("antigravity_desktop", "vscode_desktop").replace("antigravity", "vscode");
+            spoofed_body = replaced.into_bytes();
+            tracing::info!("[MITM] ⚠️ Body contained product identifier — spoofed to vscode for {} {}", host, path);
+        }
+    }
 
     // [OPSEC 7.5] Recalculate Content-Length after body spoofing to prevent mismatch
     if spoofed_body.len() != content_length {
