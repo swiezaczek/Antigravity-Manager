@@ -156,7 +156,10 @@ pub async fn handle_generate(
 
         last_email = Some(email.clone());
         let email_masked = mask_email(&email); // [FIX] Mask email
-        info!("✓ Using account: {} (type: {})", email_masked, config.request_type);
+        info!(
+            "✓ Using account: {} (type: {})",
+            email_masked, config.request_type
+        );
 
         // [FIX #6] Scope session_id with account_id to prevent cross-account SignatureCache leakage
         let scoped_session_id = format!("{}:{}", account_id, session_id);
@@ -165,7 +168,14 @@ pub async fn handle_generate(
         // [FIX #765] Pass session_id to wrap_request for signature injection
         // [NEW] 获取完整 Token 对象以注入动态规格 (dynamic > static default > 65535)
         let token_obj = token_manager.get_token_by_id(&account_id);
-        let wrapped_body = wrap_request(&body, &project_id, &mapped_model, Some(account_id.as_str()), Some(&scoped_session_id), token_obj.as_ref());
+        let wrapped_body = wrap_request(
+            &body,
+            &project_id,
+            &mapped_model,
+            Some(account_id.as_str()),
+            Some(&scoped_session_id),
+            token_obj.as_ref(),
+        );
 
         if debug_logger::is_enabled(&debug_cfg) {
             let payload = json!({
@@ -208,7 +218,7 @@ pub async fn handle_generate(
         // [Telemetry v7] Register Trajectory for MITM Proxying
         let telemetry_stream_start = std::time::Instant::now();
         let telemetry_trajectory_uuid = crate::proxy::telemetry::registry::extract_trajectory_uuid(
-            wrapped_body.get("requestId").and_then(|v| v.as_str())
+            wrapped_body.get("requestId").and_then(|v| v.as_str()),
         );
 
         // Map the Go LS trajectory UUID to this proxy account's token/project
@@ -281,7 +291,8 @@ pub async fn handle_generate(
         let status = response.status();
 
         // [NEW] 提取官方 TraceID (no longer propagated — R1 replaces with random hex)
-        let _cloud_code_trace_id = response.headers()
+        let _cloud_code_trace_id = response
+            .headers()
             .get("x-cloudaicompanion-trace-id")
             .and_then(|h| h.to_str().ok())
             .map(|s| s.to_string());
@@ -385,7 +396,7 @@ pub async fn handle_generate(
                                 Ok(next_item) => next_item,
                                 Err(_) => {
                                     error!("[Gemini-SSE] Idle timeout after 300s, terminating stream");
-                                    None 
+                                    None
                                 }
                             }
                         };
@@ -509,11 +520,7 @@ pub async fn handle_generate(
                             );
                             let unwrapped = unwrap_response(&gemini_resp);
                             // [OPSEC R6] Remove debug headers from JSON response
-                            return Ok((
-                                StatusCode::OK,
-                                Json(unwrapped),
-                            )
-                                .into_response());
+                            return Ok((StatusCode::OK, Json(unwrapped)).into_response());
                         }
                         Err(e) => {
                             error!("Stream collection error: {}", e);
@@ -572,11 +579,7 @@ pub async fn handle_generate(
 
             let unwrapped = unwrap_response(&gemini_resp);
             // [OPSEC R6] Remove debug headers from non-stream response
-            return Ok((
-                StatusCode::OK,
-                Json(unwrapped),
-            )
-                .into_response());
+            return Ok((StatusCode::OK, Json(unwrapped)).into_response());
         }
 
         // 处理错误并重试
@@ -614,7 +617,15 @@ pub async fn handle_generate(
         let trace_id = format!("gemini_{}", session_id);
 
         // 执行退避
-        if apply_retry_strategy(strategy.clone(), attempt, max_attempts, status_code, &trace_id).await {
+        if apply_retry_strategy(
+            strategy.clone(),
+            attempt,
+            max_attempts,
+            status_code,
+            &trace_id,
+        )
+        .await
+        {
             // [NEW] Apply Client Adapter "let_it_crash" strategy
             if let Some(adapter) = &client_adapter {
                 if adapter.let_it_crash() && attempt > 0 {
@@ -627,17 +638,17 @@ pub async fn handle_generate(
             }
 
             // 判断是否需要轮换账号
-        // 判断是否需要轮换账号
-        let mut force_rotate = false;
-        if !should_rotate_account(status_code, Some(&strategy)) {
-            debug!(
+            // 判断是否需要轮换账号
+            let mut force_rotate = false;
+            if !should_rotate_account(status_code, Some(&strategy)) {
+                debug!(
                 "[{}] Keeping same account for status {} (Gemini server-side issue or Grace Retry)",
                 trace_id, status_code
             );
-            force_rotate = false;
-        } else {
-            force_rotate = true;
-        }
+                force_rotate = false;
+            } else {
+                force_rotate = true;
+            }
         }
 
         // [NEW] 处理 400 错误 (Thinking 签名失效)

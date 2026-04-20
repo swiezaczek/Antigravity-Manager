@@ -1,14 +1,15 @@
+use crate::models::Account;
+use crate::modules::{account, config, logger, quota};
 use chrono::Utc;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Mutex;
 use tokio::time::{self, Duration};
-use crate::modules::{config, logger, quota, account};
-use crate::models::Account;
-use std::path::PathBuf;
 
 // Warmup history: key = "email:model_name:100", value = warmup timestamp
-static WARMUP_HISTORY: Lazy<Mutex<HashMap<String, i64>>> = Lazy::new(|| Mutex::new(load_warmup_history()));
+static WARMUP_HISTORY: Lazy<Mutex<HashMap<String, i64>>> =
+    Lazy::new(|| Mutex::new(load_warmup_history()));
 
 fn get_warmup_history_path() -> Result<PathBuf, String> {
     let data_dir = account::get_data_dir()?;
@@ -17,12 +18,10 @@ fn get_warmup_history_path() -> Result<PathBuf, String> {
 
 fn load_warmup_history() -> HashMap<String, i64> {
     match get_warmup_history_path() {
-        Ok(path) if path.exists() => {
-            match std::fs::read_to_string(&path) {
-                Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
-                Err(_) => HashMap::new(),
-            }
-        }
+        Ok(path) if path.exists() => match std::fs::read_to_string(&path) {
+            Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+            Err(_) => HashMap::new(),
+        },
         _ => HashMap::new(),
     }
 }
@@ -51,11 +50,14 @@ pub fn check_cooldown(key: &str, cooldown_seconds: i64) -> bool {
     }
 }
 
-pub fn start_scheduler(app_handle: Option<tauri::AppHandle>, proxy_state: crate::commands::proxy::ProxyServiceState) {
+pub fn start_scheduler(
+    app_handle: Option<tauri::AppHandle>,
+    proxy_state: crate::commands::proxy::ProxyServiceState,
+) {
     let proxy_state_for_token = proxy_state.clone();
     tauri::async_runtime::spawn(async move {
         logger::log_info("Smart Warmup Scheduler started. Monitoring quota at 100%...");
-        
+
         // [OPSEC] Wektor F: Usunięto deterministyczny interval, wdrożono Macro-Jitter
         loop {
             // Czekamy od 7 do 14 minut między pełnymi przebiegami, rozbijając wzorzec Cron Spike
@@ -71,7 +73,7 @@ pub fn start_scheduler(app_handle: Option<tauri::AppHandle>, proxy_state: crate:
             if !app_config.auto_refresh {
                 continue;
             }
-            
+
             // Get all accounts (no longer filtering by level)
             let Ok(mut accounts) = account::list_accounts() else {
                 continue;
@@ -96,14 +98,20 @@ pub fn start_scheduler(app_handle: Option<tauri::AppHandle>, proxy_state: crate:
 
             // Scan each model for each account
             for account in &accounts {
-
                 // Get valid token
                 let Ok((token, pid)) = quota::get_valid_token_for_warmup(account).await else {
                     continue;
                 };
 
                 // Get fresh quota
-                let Ok((fresh_quota, _)) = quota::fetch_quota_with_cache(&token, &account.email, Some(&pid), Some(&account.id)).await else {
+                let Ok((fresh_quota, _)) = quota::fetch_quota_with_cache(
+                    &token,
+                    &account.email,
+                    Some(&pid),
+                    Some(&account.id),
+                )
+                .await
+                else {
                     continue;
                 };
 
@@ -113,7 +121,10 @@ pub fn start_scheduler(app_handle: Option<tauri::AppHandle>, proxy_state: crate:
                         "[Scheduler] Account {} returned 403 Forbidden during quota fetch, marking as forbidden",
                         account.email
                     ));
-                    let _ = account::mark_account_forbidden(&account.id, "Scheduler: 403 Forbidden - quota fetch denied");
+                    let _ = account::mark_account_forbidden(
+                        &account.id,
+                        "Scheduler: 403 Forbidden - quota fetch denied",
+                    );
                     continue;
                 }
 
@@ -125,13 +136,17 @@ pub fn start_scheduler(app_handle: Option<tauri::AppHandle>, proxy_state: crate:
                         let model_to_ping = model.name.clone();
 
                         // Only warmup models configured by user (allowlist)
-                        if !app_config.scheduled_warmup.monitored_models.contains(&model_to_ping) {
+                        if !app_config
+                            .scheduled_warmup
+                            .monitored_models
+                            .contains(&model_to_ping)
+                        {
                             continue;
                         }
 
                         // Use mapped name as key
                         let history_key = format!("{}:{}:100", account.email, model_to_ping);
-                        
+
                         // Check cooldown: do not repeat warmup within 4 hours
                         {
                             let history = WARMUP_HISTORY.lock().unwrap();
@@ -162,7 +177,7 @@ pub fn start_scheduler(app_handle: Option<tauri::AppHandle>, proxy_state: crate:
                         // Quota not full, clear history, need to map name first
                         let model_to_ping = model.name.clone();
                         let history_key = format!("{}:{}:100", account.email, model_to_ping);
-                        
+
                         let mut history = WARMUP_HISTORY.lock().unwrap();
                         if history.remove(&history_key).is_some() {
                             save_warmup_history(&history);
@@ -198,22 +213,32 @@ pub fn start_scheduler(app_handle: Option<tauri::AppHandle>, proxy_state: crate:
                     let mut success = 0;
                     let now_ts = chrono::Utc::now().timestamp();
                     let warmup_tasks_clone = warmup_tasks.clone();
-                    
-                    for (task_idx, (id, email, model, token, pid, pct, history_key)) in warmup_tasks_clone.into_iter().enumerate() {
+
+                    for (task_idx, (id, email, model, token, pid, pct, history_key)) in
+                        warmup_tasks_clone.into_iter().enumerate()
+                    {
                         let global_idx = task_idx + 1;
-                        
+
                         logger::log_info(&format!(
                             "[Warmup {}/{}] {} @ {} ({}%)",
                             global_idx, total, model, email, pct
                         ));
-                        
-                        let result = quota::warmup_model_directly(&token, &model, &pid, &email, pct, Some(&id)).await;
-                        
+
+                        let result = quota::warmup_model_directly(
+                            &token,
+                            &model,
+                            &pid,
+                            &email,
+                            pct,
+                            Some(&id),
+                        )
+                        .await;
+
                         if result {
                             success += 1;
                             record_warmup_history(&history_key, now_ts);
                         }
-                        
+
                         if task_idx < total - 1 {
                             // [OPSEC V11] Send-safe jitter with enforced minimum 10s between warmup requests
                             let delay = {
@@ -234,7 +259,11 @@ pub fn start_scheduler(app_handle: Option<tauri::AppHandle>, proxy_state: crate:
 
                     // Refresh quota
                     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                    let _ = crate::commands::refresh_all_quotas_internal(&state_for_warmup, handle_for_warmup).await;
+                    let _ = crate::commands::refresh_all_quotas_internal(
+                        &state_for_warmup,
+                        handle_for_warmup,
+                    )
+                    .await;
                 });
             } else if skipped_cooldown > 0 {
                 logger::log_info(&format!(
@@ -242,7 +271,9 @@ pub fn start_scheduler(app_handle: Option<tauri::AppHandle>, proxy_state: crate:
                     skipped_cooldown
                 ));
             } else {
-                logger::log_info("[Scheduler] Scan completed, no models with 100% quota need warmup");
+                logger::log_info(
+                    "[Scheduler] Scan completed, no models with 100% quota need warmup",
+                );
             }
 
             // Sync to frontend if handle exists
@@ -251,7 +282,11 @@ pub fn start_scheduler(app_handle: Option<tauri::AppHandle>, proxy_state: crate:
                 let state_inner = proxy_state.clone();
                 tokio::spawn(async move {
                     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-                    let _ = crate::commands::refresh_all_quotas_internal(&state_inner, Some(handle_inner)).await;
+                    let _ = crate::commands::refresh_all_quotas_internal(
+                        &state_inner,
+                        Some(handle_inner),
+                    )
+                    .await;
                     logger::log_info("[Scheduler] Quota data synced to frontend");
                 });
             }
@@ -298,38 +333,72 @@ pub fn start_scheduler(app_handle: Option<tauri::AppHandle>, proxy_state: crate:
             let mut next_wakeup: i64 = 3600; // Max sleep time (1 hour = token lifecycle)
 
             for acc in accounts {
-
-                if let Ok(content) = std::fs::read_to_string(crate::modules::user_token_db::get_db_path().unwrap()) {
+                if let Ok(content) =
+                    std::fs::read_to_string(crate::modules::user_token_db::get_db_path().unwrap())
+                {
                     if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-                        if let Some(expiry) = json.get("token").and_then(|t| t.get("expiry_timestamp")).and_then(|e| e.as_i64()) {
+                        if let Some(expiry) = json
+                            .get("token")
+                            .and_then(|t| t.get("expiry_timestamp"))
+                            .and_then(|e| e.as_i64())
+                        {
                             let time_left = expiry - now;
                             // [OPSEC] Randomize refresh boundary (3-10 min) — Send-safe via timestamp entropy
                             let random_refresh_boundary: i64 = {
-                                let seed = (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().subsec_nanos() as i64) % 420 + 180;
+                                let seed = (std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .subsec_nanos()
+                                    as i64)
+                                    % 420
+                                    + 180;
                                 seed // 180..600
                             };
-                            
+
                             if time_left > 0 && time_left <= random_refresh_boundary {
                                 logger::log_info(&format!("[TokenRefresh] Proactively refreshing token for {} (Expires in {}s)", acc.email, time_left));
-                                
+
                                 // [OPSEC V7] Inter-account jitter: 15-90s to prevent temporal clustering
                                 // that allows Google to correlate multiple refresh bursts from one origin.
                                 let jitter_secs: u64 = {
-                                    let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().subsec_nanos() as u64;
+                                    let seed = std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                        .subsec_nanos()
+                                        as u64;
                                     (seed % 75) + 15 // 15..90
                                 };
-                                tokio::time::sleep(tokio::time::Duration::from_secs(jitter_secs)).await;
+                                tokio::time::sleep(tokio::time::Duration::from_secs(jitter_secs))
+                                    .await;
 
-                                if let Some(refresh_token) = json.get("token").and_then(|t| t.get("refresh_token")).and_then(|e| e.as_str()) {
-                                    match crate::modules::oauth::refresh_access_token(refresh_token, Some(&acc.id)).await {
+                                if let Some(refresh_token) = json
+                                    .get("token")
+                                    .and_then(|t| t.get("refresh_token"))
+                                    .and_then(|e| e.as_str())
+                                {
+                                    match crate::modules::oauth::refresh_access_token(
+                                        refresh_token,
+                                        Some(&acc.id),
+                                    )
+                                    .await
+                                    {
                                         Ok(token_response) => {
                                             logger::log_info(&format!("[TokenRefresh] Successfully proactively refreshed token for {}", acc.email));
                                             let new_now = chrono::Utc::now().timestamp();
-                                            let db_path = crate::modules::user_token_db::get_db_path().unwrap_or_default();
-                                            let _ = token_manager.save_refreshed_token_silent(&acc.id, &db_path, &token_response, new_now).await;
+                                            let db_path =
+                                                crate::modules::user_token_db::get_db_path()
+                                                    .unwrap_or_default();
+                                            let _ = token_manager
+                                                .save_refreshed_token_silent(
+                                                    &acc.id,
+                                                    &db_path,
+                                                    &token_response,
+                                                    new_now,
+                                                )
+                                                .await;
                                         }
                                         Err(e) => {
-                                             logger::log_warn(&format!("[TokenRefresh] Proactive refresh failed for {}: {}", acc.email, e));
+                                            logger::log_warn(&format!("[TokenRefresh] Proactive refresh failed for {}: {}", acc.email, e));
                                         }
                                     }
                                 }
@@ -348,7 +417,7 @@ pub fn start_scheduler(app_handle: Option<tauri::AppHandle>, proxy_state: crate:
 
             if !action_taken {
                 // Śpimy dokładnie do momentu, w którym którykolwiek token wpadnie w próg 3-10 min do wygaśnięcia
-                let sleep_secs = next_wakeup.max(15); 
+                let sleep_secs = next_wakeup.max(15);
                 logger::log_info(&format!("[TokenRefresh] Czekanie: Usypianie na {}s (do momentu wygaśniecia najbliższego tokena)", sleep_secs));
                 tokio::time::sleep(Duration::from_secs(sleep_secs as u64)).await;
             } else {
@@ -361,14 +430,15 @@ pub fn start_scheduler(app_handle: Option<tauri::AppHandle>, proxy_state: crate:
 
 /// Trigger immediate smart warmup check for a single account
 pub async fn trigger_warmup_for_account(account: &Account) {
-
     // Get valid token
     let Ok((token, pid)) = quota::get_valid_token_for_warmup(account).await else {
         return;
     };
 
     // Get quota info (prefer cache as refresh command likely just updated disk/cache)
-    let Ok((fresh_quota, _)) = quota::fetch_quota_with_cache(&token, &account.email, Some(&pid), Some(&account.id)).await else {
+    let Ok((fresh_quota, _)) =
+        quota::fetch_quota_with_cache(&token, &account.email, Some(&pid), Some(&account.id)).await
+    else {
         return;
     };
 
@@ -378,7 +448,10 @@ pub async fn trigger_warmup_for_account(account: &Account) {
             "[Scheduler] Account {} returned 403 Forbidden during quota fetch, marking as forbidden",
             account.email
         ));
-        let _ = account::mark_account_forbidden(&account.id, "Scheduler: 403 Forbidden - quota fetch denied");
+        let _ = account::mark_account_forbidden(
+            &account.id,
+            "Scheduler: 403 Forbidden - quota fetch denied",
+        );
         return;
     }
 
@@ -397,7 +470,11 @@ pub async fn trigger_warmup_for_account(account: &Account) {
 
         if model.percentage == 100 {
             // First check if model is in user's monitored list
-            if !app_config.scheduled_warmup.monitored_models.contains(&model_name) {
+            if !app_config
+                .scheduled_warmup
+                .monitored_models
+                .contains(&model_name)
+            {
                 continue;
             }
 
@@ -430,7 +507,8 @@ pub async fn trigger_warmup_for_account(account: &Account) {
     if !tasks_to_run.is_empty() {
         logger::log_info(&format!(
             "[Scheduler] Found {} models ready for warmup on {}",
-            tasks_to_run.len(), account.email
+            tasks_to_run.len(),
+            account.email
         ));
 
         for (model, pct, history_key) in tasks_to_run {
@@ -439,7 +517,15 @@ pub async fn trigger_warmup_for_account(account: &Account) {
                 model, account.email
             ));
 
-            let success = quota::warmup_model_directly(&token, &model, &pid, &account.email, pct, Some(&account.id)).await;
+            let success = quota::warmup_model_directly(
+                &token,
+                &model,
+                &pid,
+                &account.email,
+                pct,
+                Some(&account.id),
+            )
+            .await;
 
             // Only record history if warmup was successful
             if success {

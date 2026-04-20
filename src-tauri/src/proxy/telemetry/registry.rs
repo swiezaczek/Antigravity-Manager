@@ -69,7 +69,8 @@ impl TelemetryRegistry {
     fn cleanup_old(&self) {
         let now = Instant::now();
         let max_age = Duration::from_secs(600); // 10 minutes
-        self.map.retain(|_, v| now.duration_since(v.created_at) < max_age);
+        self.map
+            .retain(|_, v| now.duration_since(v.created_at) < max_age);
     }
 
     /// [FIX #2] Start periodic garbage collection (every 60s) to prevent unbounded growth

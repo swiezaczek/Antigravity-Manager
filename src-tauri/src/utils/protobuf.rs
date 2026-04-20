@@ -109,7 +109,7 @@ pub fn find_field(data: &[u8], target_field: u32) -> Result<Option<Vec<u8>>, Str
 }
 
 /// Create OAuthTokenInfo (Field 6)
-/// 
+///
 /// Structure:
 /// message OAuthTokenInfo {
 ///     optional string access_token = 1;
@@ -148,14 +148,14 @@ pub fn create_oauth_field(access_token: &str, refresh_token: &str, expiry: i64) 
 
     // Field 4: expiry (Nested Timestamp message, wire_type = 2)
     // Timestamp message contains: Field 1: seconds (int64, wire_type = 0)
-    let timestamp_tag = (1 << 3) | 0;  // Field 1, varint
+    let timestamp_tag = (1 << 3) | 0; // Field 1, varint
     let timestamp_msg = {
         let mut m = encode_varint(timestamp_tag);
         m.extend(encode_varint(expiry as u64));
         m
     };
-    
-    let tag4 = (4 << 3) | 2;  // Field 4, length-delimited
+
+    let tag4 = (4 << 3) | 2; // Field 4, length-delimited
     let field4 = {
         let mut f = encode_varint(tag4);
         f.extend(encode_varint(timestamp_msg.len() as u64));
@@ -174,7 +174,6 @@ pub fn create_oauth_field(access_token: &str, refresh_token: &str, expiry: i64) 
 
     field6
 }
-
 
 /// Create Email (Field 2)
 pub fn create_email_field(email: &str) -> Vec<u8> {
@@ -216,19 +215,19 @@ pub fn create_oauth_info(
 ) -> Vec<u8> {
     // Field 1: access_token
     let field1 = encode_string_field(1, access_token);
-    
+
     // Field 2: token_type = "Bearer"
     let field2 = encode_string_field(2, "Bearer");
-    
+
     // Field 3: refresh_token
     let field3 = encode_string_field(3, refresh_token);
-    
+
     // Field 4: expiry (嵌套的 Timestamp 消息)
     let timestamp_tag = (1 << 3) | 0;
     let mut timestamp_msg = encode_varint(timestamp_tag);
     timestamp_msg.extend(encode_varint(expiry as u64));
     let field4 = encode_len_delim_field(4, &timestamp_msg);
-    
+
     // Field 6: is_gcp_tos = true
     let field6 = is_gcp_tos.then(|| encode_varint_field(6, 1));
 
@@ -249,13 +248,13 @@ fn decode_legacy_base64_payload_if_needed(payload: Vec<u8>) -> Vec<u8> {
 
     let looks_like_legacy_base64 = payload.len() % 4 == 0
         && !payload.is_empty()
-        && payload
-            .iter()
-            .all(|byte| matches!(byte, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'+' | b'/' | b'='));
+        && payload.iter().all(
+            |byte| matches!(byte, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'+' | b'/' | b'='),
+        );
 
     if !looks_like_legacy_base64 {
         return payload;
-}
+    }
 
     let Ok(decoded) = general_purpose::STANDARD.decode(&payload) else {
         return payload;
@@ -324,7 +323,8 @@ pub fn decode_unified_state_entry(outer_b64: &str) -> Result<(String, Vec<u8>), 
         .decode(outer_b64)
         .map_err(|e| format!("Outer Base64 decoding failed: {}", e))?;
 
-    decode_topic_row_payload(&outer_blob).or_else(|_| decode_legacy_unified_state_entry(&outer_blob))
+    decode_topic_row_payload(&outer_blob)
+        .or_else(|_| decode_legacy_unified_state_entry(&outer_blob))
 }
 
 /// 查找指定 protobuf varint 字段
@@ -366,7 +366,7 @@ pub fn create_minimal_user_status_payload(email: &str) -> Vec<u8> {
     email.hash(&mut hasher);
     let hash_val = hasher.finish();
     let gaia_mock = format!("1{:020}", hash_val % 100_000_000_000_000_000_00);
-    
+
     [
         encode_string_field(1, &gaia_mock), // GAIA ID
         encode_string_field(3, email),      // Display Name

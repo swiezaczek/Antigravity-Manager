@@ -32,7 +32,7 @@ pub fn get_antigravity_cache_paths() -> Vec<PathBuf> {
 
             // Application caches
             paths.push(home.join("Library/Caches/com.google.antigravity"));
-            
+
             // [Zero-Emission V3] Identity Residue Paths
             paths.push(home.join("Library/Application Support/Antigravity/auth-tokens"));
             paths.push(home.join("Library/Application Support/Antigravity/Network"));
@@ -60,7 +60,7 @@ pub fn get_antigravity_cache_paths() -> Vec<PathBuf> {
         if let Ok(app_data) = std::env::var("APPDATA") {
             let app_path = PathBuf::from(&app_data);
             paths.push(app_path.join("Antigravity\\Cache"));
-            
+
             // [Zero-Emission V3] Identity Residue Paths
             paths.push(app_path.join("Antigravity\\auth-tokens"));
             paths.push(app_path.join("Antigravity\\Network"));
@@ -76,7 +76,7 @@ pub fn get_antigravity_cache_paths() -> Vec<PathBuf> {
             // XDG cache directory
             paths.push(home.join(".cache/Antigravity"));
             paths.push(home.join(".cache/google-antigravity"));
-            
+
             // [Zero-Emission V3] Identity Residue Paths
             paths.push(home.join(".config/Antigravity/auth-tokens"));
             paths.push(home.join(".config/Antigravity/Network"));
@@ -175,7 +175,10 @@ pub fn clear_antigravity_cache(custom_paths: Option<Vec<String>>) -> Result<Clea
 
     for path in paths {
         if !path.exists() {
-            logger::log_info(&format!("Cache path does not exist, skipping: {}", path.display()));
+            logger::log_info(&format!(
+                "Cache path does not exist, skipping: {}",
+                path.display()
+            ));
             continue;
         }
 
@@ -183,7 +186,9 @@ pub fn clear_antigravity_cache(custom_paths: Option<Vec<String>>) -> Result<Clea
 
         match clear_directory(&path) {
             Ok(size) => {
-                result.cleared_paths.push(path.to_string_lossy().to_string());
+                result
+                    .cleared_paths
+                    .push(path.to_string_lossy().to_string());
                 result.total_size_freed += size;
                 logger::log_info(&format!(
                     "Cleared {}: {:.2} MB freed",

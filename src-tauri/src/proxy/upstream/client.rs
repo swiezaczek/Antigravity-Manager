@@ -48,11 +48,11 @@ pub fn sanitize_error_for_log(error_text: &str) -> String {
     // 抹除常见敏感 key 的值
     let re = regex::Regex::new(r#"(?i)(access_token|refresh_token|id_token|authorization|api_key|secret|password|proxy_url|http_proxy|https_proxy)\s*[:=]\s*[^"'\\\s,}\]]+"#).unwrap();
     let redacted = re.replace_all(error_text, "$1=<redacted>");
-    
+
     // 抹除 Bearer token
     let re_bearer = regex::Regex::new(r#"(?i)(bearer\s+)[^"'\\\s,}\]]+"#).unwrap();
     let redacted = re_bearer.replace_all(&redacted, "$1<redacted>");
-    
+
     // 限制长度防止日志炸弹
     if redacted.len() > 1000 {
         format!("{}... (truncated)", &redacted[..1000])
@@ -67,8 +67,8 @@ const V1_INTERNAL_BASE_URL_PROD: &str = "https://cloudcode-pa.googleapis.com/v1i
 const V1_INTERNAL_BASE_URL_DAILY: &str = "https://daily-cloudcode-pa.googleapis.com/v1internal";
 
 const V1_INTERNAL_BASE_URL_FALLBACKS: [&str; 2] = [
-    V1_INTERNAL_BASE_URL_PROD,    // 优先级 1: Prod (zgodnie z oryginałem)
-    V1_INTERNAL_BASE_URL_DAILY,   // 优先级 2: Daily (zgodnie z oryginałem)
+    V1_INTERNAL_BASE_URL_PROD,  // 优先级 1: Prod (zgodnie z oryginałem)
+    V1_INTERNAL_BASE_URL_DAILY, // 优先级 2: Daily (zgodnie z oryginałem)
 ];
 
 pub struct UpstreamClient {
@@ -97,7 +97,10 @@ impl UpstreamClient {
                             error = %err_without_proxy,
                             "Failed to create default HTTP client without proxy; falling back to bare client"
                         );
-                        Client::builder().http1_only().build().expect("critical: upstream fallback client build failed")
+                        Client::builder()
+                            .http1_only()
+                            .build()
+                            .expect("critical: upstream fallback client build failed")
                     }
                 }
             }
@@ -248,8 +251,7 @@ impl UpstreamClient {
                         // REST API via proxy_pool defaults to NodeJS behavior
                         match self.build_client_with_proxy(proxy_cfg.clone(), false) {
                             Ok(client) => {
-                                self.client_cache
-                                    .insert(acc_id.to_string(), client.clone());
+                                self.client_cache.insert(acc_id.to_string(), client.clone());
                                 tracing::info!(
                                     "Using ProxyPool proxy ID: {} for account: {} (Isolated Cache)",
                                     proxy_cfg.entry_id,
@@ -373,7 +375,10 @@ impl UpstreamClient {
         // [OPSEC] For loadCodeAssist, prefer the secondary endpoint that is known to work
         let fallbacks_override;
         let fallbacks: &[&str] = if method == "loadCodeAssist" {
-            fallbacks_override = [V1_INTERNAL_BASE_URL_FALLBACKS[1], V1_INTERNAL_BASE_URL_FALLBACKS[0]];
+            fallbacks_override = [
+                V1_INTERNAL_BASE_URL_FALLBACKS[1],
+                V1_INTERNAL_BASE_URL_FALLBACKS[0],
+            ];
             &fallbacks_override
         } else {
             &V1_INTERNAL_BASE_URL_FALLBACKS
@@ -387,21 +392,19 @@ impl UpstreamClient {
             let is_sse = query_string.unwrap_or("").contains("alt=sse");
 
             let mut req = client.post(&url).headers(headers.clone());
-            
+
             // [OPSEC] Content-Length is STRICTLY required for non-SSE requests.
             // Transfer-Encoding: chunked is ONLY used for streaming.
             req = if is_sse {
                 let bytes_clone = body_bytes.clone();
-                req.body(rquest::Body::wrap_stream(futures::stream::once(async move {
-                    Ok::<_, std::io::Error>(bytes_clone)
-                })))
+                req.body(rquest::Body::wrap_stream(futures::stream::once(
+                    async move { Ok::<_, std::io::Error>(bytes_clone) },
+                )))
             } else {
                 req.body(body_bytes.clone())
             };
 
-            let response = req
-                .send()
-                .await;
+            let response = req.send().await;
 
             match response {
                 Ok(resp) => {
@@ -453,7 +456,11 @@ impl UpstreamClient {
                     });
                 }
                 Err(e) => {
-                    let msg = format!("HTTP request failed at {}: {}", base_url, sanitize_error_for_log(&e.to_string()));
+                    let msg = format!(
+                        "HTTP request failed at {}: {}",
+                        base_url,
+                        sanitize_error_for_log(&e.to_string())
+                    );
                     tracing::debug!("{}", msg);
                     // [NEW] 记录网络错误的降级尝试
                     fallback_attempts.push(FallbackAttemptLog {

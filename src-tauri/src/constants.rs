@@ -1,5 +1,5 @@
-use std::sync::LazyLock;
 use regex::Regex;
+use std::sync::LazyLock;
 
 /// [OPSEC] Wektor 5.5: Optional flag to disable remote version checks to prevent IP leakage correlation on GCP Cloud Run
 pub const DISABLE_REMOTE_VERSION_CHECK: bool = true;
@@ -10,8 +10,6 @@ const VERSION_URL: &str = "https://antigravity-auto-updater-974169037036.us-cent
 /// Second fallback: Official Changelog page
 const CHANGELOG_URL: &str = "https://antigravity.google/changelog";
 
-
-
 /// Known stable configuration (for Docker/Headless fallback)
 /// Antigravity 4.1.32 uses Electron 39.2.3 which corresponds to Chrome 132.0.6834.160
 const KNOWN_STABLE_VERSION: &str = "1.22.2";
@@ -19,9 +17,8 @@ const KNOWN_STABLE_ELECTRON: &str = "39.2.3";
 const KNOWN_STABLE_CHROME: &str = "132.0.6834.160";
 
 /// Pre-compiled regex for version parsing (X.Y.Z pattern)
-static VERSION_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\d+\.\d+\.\d+").expect("Invalid version regex")
-});
+static VERSION_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\d+\.\d+\.\d+").expect("Invalid version regex"));
 
 /// Parse version from response text using pre-compiled regex
 /// Matches semver pattern: X.Y.Z (e.g., "1.15.8")
@@ -32,9 +29,7 @@ fn parse_version(text: &str) -> Option<String> {
 /// Compare two X.Y.Z semantic version strings.
 /// Returns Ordering::Greater if v1 > v2.
 fn compare_semver(v1: &str, v2: &str) -> std::cmp::Ordering {
-    let parse = |v: &str| -> Vec<u32> {
-        v.split('.').filter_map(|s| s.parse().ok()).collect()
-    };
+    let parse = |v: &str| -> Vec<u32> { v.split('.').filter_map(|s| s.parse().ok()).collect() };
     let p1 = parse(v1);
     let p2 = parse(v2);
     for i in 0..p1.len().max(p2.len()) {
@@ -197,7 +192,7 @@ pub static NATIVE_OAUTH_USER_AGENT: LazyLock<String> = LazyLock::new(|| {
     let platform_info = match std::env::consts::OS {
         "macos" => match std::env::consts::ARCH {
             "aarch64" => "darwin/arm64",
-            _ => "darwin/amd64"
+            _ => "darwin/amd64",
         },
         "windows" => "windows/amd64",
         "linux" => "linux/amd64",
@@ -207,7 +202,10 @@ pub static NATIVE_OAUTH_USER_AGENT: LazyLock<String> = LazyLock::new(|| {
     // "antigravity/1.22.2 windows/amd64 google-api-nodejs-client/10.3.0" on all
     // Node.js gaxios calls (loadCodeAssist, onboardUser, fetchUserInfo, etc.).
     // Stripping this prefix caused a fingerprint mismatch triggering 403s.
-    format!("antigravity/{} {} google-api-nodejs-client/10.3.0", KNOWN_STABLE_VERSION, platform_info)
+    format!(
+        "antigravity/{} {} google-api-nodejs-client/10.3.0",
+        KNOWN_STABLE_VERSION, platform_info
+    )
 });
 
 /// Native Go Language Server User-Agent (for streamGenerateContent)
@@ -215,7 +213,7 @@ pub static GO_LS_USER_AGENT: LazyLock<String> = LazyLock::new(|| {
     let platform_info = match std::env::consts::OS {
         "macos" => match std::env::consts::ARCH {
             "aarch64" => "darwin/arm64",
-            _ => "darwin/amd64"
+            _ => "darwin/amd64",
         },
         "windows" => "windows/amd64",
         "linux" => "linux/amd64",
@@ -235,14 +233,14 @@ pub static CURRENT_PLATFORM: LazyLock<String> = LazyLock::new(|| {
         ("linux", "x86_64") => "LINUX_AMD64",
         ("linux", _) => "LINUX_ARM64",
         _ => "LINUX_AMD64",
-    }.to_string()
+    }
+    .to_string()
 });
 
 /// Short User-Agent for OAuth token exchange (no antigravity/ prefix)
 /// Official client sends ONLY "google-api-nodejs-client/10.3.0" to /token endpoint
-pub static OAUTH_SHORT_UA: LazyLock<String> = LazyLock::new(|| {
-    "google-api-nodejs-client/10.3.0".to_string()
-});
+pub static OAUTH_SHORT_UA: LazyLock<String> =
+    LazyLock::new(|| "google-api-nodejs-client/10.3.0".to_string());
 
 /// Current resolved Antigravity version (e.g., "4.1.32")
 pub fn get_current_version() -> String {
@@ -255,20 +253,21 @@ pub fn get_default_user_agent() -> String {
     let platform_info = match std::env::consts::OS {
         "macos" => match std::env::consts::ARCH {
             "aarch64" => "darwin/arm64",
-            _ => "darwin/amd64"
+            _ => "darwin/amd64",
         },
         "windows" => "windows/amd64",
         "linux" => "linux/amd64",
         _ => "linux/amd64",
     };
     // [OPSEC Fix] Restored canonical antigravity/ prefix
-    format!("antigravity/{} {} google-api-nodejs-client/10.3.0", KNOWN_STABLE_VERSION, platform_info)
+    format!(
+        "antigravity/{} {} google-api-nodejs-client/10.3.0",
+        KNOWN_STABLE_VERSION, platform_info
+    )
 }
 
 /// Global Session ID (generated once per app launch)
-pub static SESSION_ID: LazyLock<String> = LazyLock::new(|| {
-    uuid::Uuid::new_v4().to_string()
-});
+pub static SESSION_ID: LazyLock<String> = LazyLock::new(|| uuid::Uuid::new_v4().to_string());
 
 /// Returns the user agent string required to match the IDE plugin fingerprint.
 /// Version selection: max(local installation, remote latest, known stable current)
@@ -277,7 +276,7 @@ pub static USER_AGENT: LazyLock<String> = LazyLock::new(|| {
     let platform_info = match std::env::consts::OS {
         "macos" => match std::env::consts::ARCH {
             "aarch64" => "darwin/arm64",
-            _ => "darwin/amd64"
+            _ => "darwin/amd64",
         },
         "windows" => "windows/amd64",
         "linux" => "linux/amd64",
@@ -285,7 +284,10 @@ pub static USER_AGENT: LazyLock<String> = LazyLock::new(|| {
     };
 
     // [OPSEC Fix] Restored canonical antigravity/ prefix
-    let ua = format!("antigravity/{} {} google-api-nodejs-client/10.3.0", KNOWN_STABLE_VERSION, platform_info);
+    let ua = format!(
+        "antigravity/{} {} google-api-nodejs-client/10.3.0",
+        KNOWN_STABLE_VERSION, platform_info
+    );
     ua
 });
 
@@ -322,11 +324,23 @@ mod tests {
 
     #[test]
     fn test_compare_semver() {
-        assert_eq!(compare_semver("4.1.32", "4.1.22"), std::cmp::Ordering::Greater);
+        assert_eq!(
+            compare_semver("4.1.32", "4.1.22"),
+            std::cmp::Ordering::Greater
+        );
         assert_eq!(compare_semver("4.1.22", "4.1.32"), std::cmp::Ordering::Less);
-        assert_eq!(compare_semver("4.1.32", "4.1.32"), std::cmp::Ordering::Equal);
-        assert_eq!(compare_semver("5.0.0", "4.9.9"), std::cmp::Ordering::Greater);
-        assert_eq!(compare_semver("1.16.5", "1.16.4"), std::cmp::Ordering::Greater);
+        assert_eq!(
+            compare_semver("4.1.32", "4.1.32"),
+            std::cmp::Ordering::Equal
+        );
+        assert_eq!(
+            compare_semver("5.0.0", "4.9.9"),
+            std::cmp::Ordering::Greater
+        );
+        assert_eq!(
+            compare_semver("1.16.5", "1.16.4"),
+            std::cmp::Ordering::Greater
+        );
     }
 
     #[test]

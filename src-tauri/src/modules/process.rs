@@ -573,7 +573,9 @@ pub fn close_antigravity(#[allow(unused_variables)] timeout_secs: u64) -> Result
                 .and_then(|c| c.antigravity_executable)
                 .and_then(|p| std::path::PathBuf::from(p).canonicalize().ok());
 
-            crate::modules::logger::log_info("Analyzing Linux process list to identify main process:");
+            crate::modules::logger::log_info(
+                "Analyzing Linux process list to identify main process:",
+            );
             for pid_u32 in &pids {
                 let pid = sysinfo::Pid::from_u32(*pid_u32);
                 if let Some(process) = system.process(pid) {
@@ -643,7 +645,10 @@ pub fn close_antigravity(#[allow(unused_variables)] timeout_secs: u64) -> Result
 
             // Phase 1: Graceful exit (SIGTERM)
             if let Some(pid) = main_pid {
-                crate::modules::logger::log_info(&format!("Attempting to gracefully close main process {} (SIGTERM)", pid));
+                crate::modules::logger::log_info(&format!(
+                    "Attempting to gracefully close main process {} (SIGTERM)",
+                    pid
+                ));
                 let _ = Command::new("kill")
                     .args(["-15", &pid.to_string()])
                     .output();
@@ -693,7 +698,9 @@ pub fn close_antigravity(#[allow(unused_variables)] timeout_secs: u64) -> Result
 
     // Final check
     if is_antigravity_running() {
-        return Err("Unable to close Antigravity process, please close manually and retry".to_string());
+        return Err(
+            "Unable to close Antigravity process, please close manually and retry".to_string(),
+        );
     }
 
     crate::modules::logger::log_info("Antigravity closed successfully");
@@ -703,22 +710,22 @@ pub fn close_antigravity(#[allow(unused_variables)] timeout_secs: u64) -> Result
 // [Zero-Emission V3] Process OS Env Spoofing
 fn apply_spoofed_env(cmd: &mut std::process::Command, account_id: Option<&str>) {
     if let Some(id) = account_id {
-        use std::hash::{Hash, Hasher};
         use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
         let mut hasher = DefaultHasher::new();
         id.hash(&mut hasher);
         let hash = hasher.finish();
-        
+
         let username = format!("User_{:04X}", hash & 0xFFFF);
         let computername = format!("DESKTOP-{:04X}", (hash >> 16) & 0xFFFF);
         let userdomain = format!("WORKSPACE-{:04X}", (hash >> 32) & 0xFFFF);
-        
+
         cmd.env("USERNAME", &username)
-           .env("COMPUTERNAME", &computername)
-           .env("USERDOMAIN", &userdomain)
-           .env("USER", &username)
-           .env("HOSTNAME", &computername);
-           
+            .env("COMPUTERNAME", &computername)
+            .env("USERDOMAIN", &userdomain)
+            .env("USER", &username)
+            .env("HOSTNAME", &computername);
+
         crate::modules::logger::log_info(&format!(
             "[Zero-Emission] Mocked OS identity | USER: {} | HOST: {}",
             username, computername
@@ -745,13 +752,13 @@ fn apply_spoofed_env(cmd: &mut std::process::Command, account_id: Option<&str>) 
             if let Some(ca_path) = crate::proxy::mitm::get_ca_cert_path() {
                 // NODE_EXTRA_CA_CERTS: Node.js reads this to add extra CA certs
                 cmd.env("NODE_EXTRA_CA_CERTS", &ca_path);
-                
+
                 #[cfg(not(target_os = "windows"))]
                 {
                     // SSL_CERT_FILE: Go LS reads this for TLS trust (only needed safely on non-Windows)
                     cmd.env("SSL_CERT_FILE", &ca_path);
                 }
-                
+
                 // [MITM v8] Also set REQUESTS_CA_BUNDLE for Python-based tools
                 cmd.env("REQUESTS_CA_BUNDLE", &ca_path);
             }
@@ -796,7 +803,10 @@ pub fn start_antigravity(account_id: Option<&str>) -> Result<(), String> {
         }
 
         if path.exists() {
-            crate::modules::logger::log_info(&format!("Starting with manual configuration path: {}", path_str));
+            crate::modules::logger::log_info(&format!(
+                "Starting with manual configuration path: {}",
+                path_str
+            ));
 
             #[cfg(target_os = "macos")]
             {
@@ -813,7 +823,8 @@ pub fn start_antigravity(account_id: Option<&str>) -> Result<(), String> {
                     }
 
                     apply_spoofed_env(&mut cmd, account_id);
-                    cmd.spawn().map_err(|e| format!("Startup failed (open): {}", e))?;
+                    cmd.spawn()
+                        .map_err(|e| format!("Startup failed (open): {}", e))?;
                 } else {
                     let mut cmd = Command::new(&path_str);
 
@@ -895,17 +906,17 @@ pub fn start_antigravity(account_id: Option<&str>) -> Result<(), String> {
                 "Starting with auto-detected path (Zero-Emission Env Spoofing enforced): {}",
                 path_str
             ));
-            
+
             use crate::utils::command::CommandExtWrapper;
             let mut cmd = Command::new(&path_str);
             cmd.creation_flags_windows();
-            
+
             if let Some(ref args) = args {
                 for arg in args {
                     cmd.arg(arg);
                 }
             }
-            
+
             apply_spoofed_env(&mut cmd, account_id);
             cmd.spawn().map_err(|e| format!("Startup failed: {}", e))?;
         } else {

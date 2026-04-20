@@ -20,7 +20,11 @@ pub fn set_mitm_port(port: u16) {
 /// Get the MITM forward proxy port (0 = not running).
 pub fn get_mitm_port() -> Option<u16> {
     let port = MITM_PORT.load(Ordering::Relaxed);
-    if port > 0 { Some(port) } else { None }
+    if port > 0 {
+        Some(port)
+    } else {
+        None
+    }
 }
 
 /// Get the path to the MITM CA certificate PEM file.

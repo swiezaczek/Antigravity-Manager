@@ -76,7 +76,7 @@ impl CertificateAuthority {
             // But running it might trigger a Windows Security prompt (even for CurrentUser).
             // Let's only do it if the cert is freshly generated to minimize prompts.
         }
-        
+
         if is_new || std::env::var("FORCE_CA_INSTALL").is_ok() {
             tracing::info!("[MITM-CA] Installing MITM CA to Windows CurrentUser Root store...");
             let output = std::process::Command::new("certutil")
@@ -84,7 +84,7 @@ impl CertificateAuthority {
                 .arg(cert_path)
                 .output()
                 .map_err(|e| format!("certutil failed: {}", e))?;
-            
+
             if !output.status.success() {
                 return Err(String::from_utf8_lossy(&output.stderr).into_owned());
             }
@@ -95,8 +95,8 @@ impl CertificateAuthority {
 
     /// Generate a new self-signed CA.
     fn generate_new() -> Result<Self, String> {
-        let key_pair =
-            KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).map_err(|e| format!("CA key generation failed: {}", e))?;
+        let key_pair = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)
+            .map_err(|e| format!("CA key generation failed: {}", e))?;
 
         let params = build_ca_params();
         let ca_cert = params
@@ -118,8 +118,7 @@ impl CertificateAuthority {
     fn load_key_and_regenerate(key_path: &PathBuf) -> Result<Self, String> {
         let key_pem =
             std::fs::read_to_string(key_path).map_err(|e| format!("Read CA key: {}", e))?;
-        let key_pair =
-            KeyPair::from_pem(&key_pem).map_err(|e| format!("Parse CA key: {}", e))?;
+        let key_pair = KeyPair::from_pem(&key_pem).map_err(|e| format!("Parse CA key: {}", e))?;
 
         // Regenerate the CA cert using the loaded key pair
         // (same key pair = same public key = trust chain works)
@@ -141,15 +140,13 @@ impl CertificateAuthority {
     /// Save both CA certificate and key to PEM files.
     fn save_to_files(&self, cert_path: &PathBuf, key_path: &PathBuf) -> Result<(), String> {
         if let Some(parent) = cert_path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("Create CA dir: {}", e))?;
+            std::fs::create_dir_all(parent).map_err(|e| format!("Create CA dir: {}", e))?;
         }
 
         self.save_cert_to_file(cert_path)?;
 
         let key_pem = self.ca_key_pair.serialize_pem();
-        std::fs::write(key_path, &key_pem)
-            .map_err(|e| format!("Write CA key: {}", e))?;
+        std::fs::write(key_path, &key_pem).map_err(|e| format!("Write CA key: {}", e))?;
 
         tracing::info!("[MITM-CA] CA saved to {:?}", cert_path);
         Ok(())
@@ -158,12 +155,10 @@ impl CertificateAuthority {
     /// Save just the cert PEM to file.
     fn save_cert_to_file(&self, cert_path: &PathBuf) -> Result<(), String> {
         if let Some(parent) = cert_path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("Create CA dir: {}", e))?;
+            std::fs::create_dir_all(parent).map_err(|e| format!("Create CA dir: {}", e))?;
         }
         let cert_pem = pem::encode(&pem::Pem::new("CERTIFICATE", self.ca_cert_der.clone()));
-        std::fs::write(cert_path, &cert_pem)
-            .map_err(|e| format!("Write CA cert: {}", e))?;
+        std::fs::write(cert_path, &cert_pem).map_err(|e| format!("Write CA cert: {}", e))?;
         Ok(())
     }
 
@@ -173,12 +168,10 @@ impl CertificateAuthority {
             return cached.clone();
         }
 
-        let config = self
-            .generate_host_config(hostname)
-            .unwrap_or_else(|e| {
-                tracing::error!("[MITM-CA] Failed to generate cert for {}: {}", hostname, e);
-                self.generate_host_config("localhost").unwrap()
-            });
+        let config = self.generate_host_config(hostname).unwrap_or_else(|e| {
+            tracing::error!("[MITM-CA] Failed to generate cert for {}: {}", hostname, e);
+            self.generate_host_config("localhost").unwrap()
+        });
 
         let config = Arc::new(config);
         self.cert_cache.insert(hostname.to_string(), config.clone());
@@ -187,16 +180,17 @@ impl CertificateAuthority {
 
     /// Generate a ServerConfig with a certificate valid for the given hostname.
     fn generate_host_config(&self, hostname: &str) -> Result<rustls::ServerConfig, String> {
-        let host_key =
-            KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).map_err(|e| format!("Host key gen: {}", e))?;
+        let host_key = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)
+            .map_err(|e| format!("Host key gen: {}", e))?;
 
         let mut host_params = CertificateParams::default();
         let mut dn = DistinguishedName::new();
         dn.push(DnType::CommonName, hostname);
         host_params.distinguished_name = dn;
-        host_params.subject_alt_names = vec![SanType::DnsName(
-            hostname.try_into().map_err(|e: rcgen::Error| format!("Invalid hostname: {}", e))?,
-        )];
+        host_params.subject_alt_names =
+            vec![SanType::DnsName(hostname.try_into().map_err(
+                |e: rcgen::Error| format!("Invalid hostname: {}", e),
+            )?)];
         host_params.not_before = rcgen::date_time_ymd(2024, 1, 1);
         host_params.not_after = rcgen::date_time_ymd(2026, 12, 31);
 

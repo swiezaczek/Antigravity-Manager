@@ -77,7 +77,14 @@ pub async fn handle_warmup(
     let (access_token, project_id, account_id) =
         if let (Some(at), Some(pid)) = (&req.access_token, &req.project_id) {
             // [FIX #3] Resolve account_id from email for proxy isolation even with direct token
-            (at.clone(), pid.clone(), state.token_manager.get_account_id_by_email(&req.email).unwrap_or_default())
+            (
+                at.clone(),
+                pid.clone(),
+                state
+                    .token_manager
+                    .get_account_id_by_email(&req.email)
+                    .unwrap_or_default(),
+            )
         } else {
             match state.token_manager.get_token_by_email(&req.email).await {
                 Ok((at, pid, _, acc_id, _wait_ms)) => (at, pid, acc_id),
@@ -180,7 +187,14 @@ pub async fn handle_warmup(
             })
         };
 
-        wrap_request(&base_request, &project_id, &req.model, Some(account_id.as_str()), Some(&session_id), None) // [FIX] Added None for token param
+        wrap_request(
+            &base_request,
+            &project_id,
+            &req.model,
+            Some(account_id.as_str()),
+            Some(&session_id),
+            None,
+        ) // [FIX] Added None for token param
     };
 
     // ===== 步骤 3: 调用 UpstreamClient =====
@@ -289,7 +303,10 @@ pub async fn handle_warmup(
                             "[Warmup-API] 403 Forbidden detected for {}, marking account as forbidden",
                             req.email
                         );
-                        let _ = crate::modules::account::mark_account_forbidden(&resolved_account_id, &error_text);
+                        let _ = crate::modules::account::mark_account_forbidden(
+                            &resolved_account_id,
+                            &error_text,
+                        );
                     } else {
                         warn!(
                             "[Warmup-API] 403 Forbidden detected for {} but could not resolve account_id, skipping mark",
@@ -310,7 +327,9 @@ pub async fn handle_warmup(
             };
 
             // 添加响应头，让监控中间件捕获账号信息
-            if let Ok(email_val) = axum::http::HeaderValue::from_str(&crate::proxy::upstream::client::mask_email(&req.email)) {
+            if let Ok(email_val) = axum::http::HeaderValue::from_str(
+                &crate::proxy::upstream::client::mask_email(&req.email),
+            ) {
                 response.headers_mut().insert("X-Account-Email", email_val);
             }
             if let Ok(model_val) = axum::http::HeaderValue::from_str(&req.model) {
@@ -361,7 +380,9 @@ pub async fn handle_warmup(
                 .into_response();
 
             // 即使失败也添加响应头，以便监控
-            if let Ok(email_val) = axum::http::HeaderValue::from_str(&crate::proxy::upstream::client::mask_email(&req.email)) {
+            if let Ok(email_val) = axum::http::HeaderValue::from_str(
+                &crate::proxy::upstream::client::mask_email(&req.email),
+            ) {
                 response.headers_mut().insert("X-Account-Email", email_val);
             }
             if let Ok(model_val) = axum::http::HeaderValue::from_str(&req.model) {
