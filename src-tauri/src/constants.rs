@@ -11,7 +11,7 @@ const CHANGELOG_URL: &str = "https://antigravity.google/changelog";
 
 /// Known stable configuration (for Docker/Headless fallback)
 /// Antigravity 4.1.32 uses Electron 39.2.3 which corresponds to Chrome 132.0.6834.160
-const KNOWN_STABLE_VERSION: &str = "4.1.42";
+const KNOWN_STABLE_VERSION: &str = "4.1.43";
 const KNOWN_STABLE_ELECTRON: &str = "39.2.3";
 const KNOWN_STABLE_CHROME: &str = "132.0.6834.160";
 
