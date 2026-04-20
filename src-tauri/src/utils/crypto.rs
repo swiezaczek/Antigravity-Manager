@@ -42,9 +42,7 @@ where
     }
 
     // [FIX #1738] 检查魔术前缀
-    if raw.starts_with(ENCRYPTED_PREFIX) {
-        // 新版格式：去前缀后解密
-        let ciphertext = &raw[ENCRYPTED_PREFIX.len()..];
+    if let Some(ciphertext) = raw.strip_prefix(ENCRYPTED_PREFIX) {
         match decrypt_string_internal(ciphertext) {
             Ok(plaintext) => Ok(plaintext),
             Err(_) => {
@@ -105,8 +103,8 @@ fn decrypt_string_internal(encrypted_base64: &str) -> Result<String, String> {
 
 #[allow(dead_code)]
 pub fn decrypt_string(encrypted: &str) -> Result<String, String> {
-    if encrypted.starts_with(ENCRYPTED_PREFIX) {
-        decrypt_string_internal(&encrypted[ENCRYPTED_PREFIX.len()..])
+    if let Some(stripped) = encrypted.strip_prefix(ENCRYPTED_PREFIX) {
+        decrypt_string_internal(stripped)
     } else {
         decrypt_string_internal(encrypted)
     }

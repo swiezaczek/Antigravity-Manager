@@ -170,7 +170,7 @@ where
             payload["response_content"] = serde_json::Value::String(response_content);
         }
 
-        write_debug_payload(&cfg, Some(&payload["trace_id"].as_str().unwrap_or("unknown")), prefix, &payload).await;
+        write_debug_payload(&cfg, Some(payload["trace_id"].as_str().unwrap_or("unknown")), prefix, &payload).await;
     };
 
     Box::pin(wrapped)

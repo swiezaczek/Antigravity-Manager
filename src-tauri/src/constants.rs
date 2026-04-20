@@ -121,10 +121,8 @@ fn try_fetch_remote_version() -> Option<String> {
 /// Smart version resolution strategy:
 ///   best = max(Local Installation, Remote Latest, Known Stable Fallback)
 ///
-/// This guarantees that even when:
-///   - The local Antigravity install is outdated, OR
-///   - Local detection fails (Docker / headless / non-standard path),
-/// ...we always report a version >= the current minimum required by Google's API.
+/// This guarantees that even when the local Antigravity install is outdated, or
+/// local detection fails, we always report a version >= the minimum required.
 #[allow(dead_code)]
 fn resolve_version_config() -> (VersionConfig, VersionSource) {
     // Floor: static known-stable value (updated with each release of this project)

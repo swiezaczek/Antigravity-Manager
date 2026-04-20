@@ -3,18 +3,16 @@
 
 // 已移除未使用的 Value 导入
 
-/// 将 JSON Schema 中的类型名称转为大写 (Gemini 要求)
-/// 例如: "string" -> "STRING", "integer" -> "INTEGER"
+// /// 将 JSON Schema 中的类型名称转为大写 (Gemini 要求)
+// /// 例如: "string" -> "STRING", "integer" -> "INTEGER"
 // 已移除未使用的 uppercase_schema_types 函数
 
 /// 根据模型名称获取上下文 Token 限制
 pub fn get_context_limit_for_model(model: &str) -> u32 {
     if model.contains("pro") {
         2_097_152 // 2M for Pro
-    } else if model.contains("flash") {
-        1_048_576 // 1M for Flash
     } else {
-        1_048_576 // Default 1M
+        1_048_576 // Default 1M (covers flash and others)
     }
 }
 
@@ -105,7 +103,7 @@ pub fn to_claude_usage(
     }
 }
 
-/// 提取 thoughtSignature
+// /// 提取 thoughtSignature
 // 已移除未使用的 extract_thought_signature 函数
 
 #[cfg(test)]

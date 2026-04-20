@@ -95,7 +95,7 @@ fn extract_structured_delay_recursive(value: &serde_json::Value, depth: usize) -
             // 递归扫描子字段
             for (key, val) in map {
                 // 模糊 Key 匹配 (转小写, 去除分隔符)
-                let normalized_key = key.to_lowercase().replace('-', "").replace('_', "");
+                let normalized_key = key.to_lowercase().replace(['-', '_'], "");
                 if RETRY_HINT_KEYS.contains(normalized_key.as_str()) {
                     // 如果命中了 Hint Key，直接尝试解析其内容
                     if let Some(d) = parse_structured_duration_value(val) {

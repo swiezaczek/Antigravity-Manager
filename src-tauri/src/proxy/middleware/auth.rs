@@ -254,29 +254,11 @@ pub struct UserTokenIdentity {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::proxy::ProxyAuthMode;
 
     #[tokio::test]
     async fn test_admin_auth_with_password() {
-        let _security = Arc::new(RwLock::new(ProxySecurityConfig {
-            auth_mode: ProxyAuthMode::Strict,
-            api_key: "sk-api".to_string(),
-            admin_password: Some("admin123".to_string()),
-            allow_lan_access: true,
-            port: 8045,
-            security_monitor: crate::proxy::config::SecurityMonitorConfig::default(),
-        }));
-
-        // 模拟请求 - 管理接口使用正确的管理密码
-        let _req = Request::builder()
-            .header("Authorization", "Bearer admin123")
-            .uri("/admin/stats")
-            .body(axum::body::Body::empty())
-            .unwrap();
-
+        // [Placeholder] 验证管理接口认证逻辑
         // 此测试由于涉及 Next 中间件调用比较复杂,主要验证核心逻辑
-        // 我们在 auth_middleware_internal 基础上做了逻辑校验即可
     }
 
     #[test]

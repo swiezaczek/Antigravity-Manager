@@ -54,7 +54,7 @@ impl ContextManager {
     ///
     /// This removes Thinking blocks completely (unlike compression which keeps placeholders/signatures)
     /// Used when context is critical or signatures are invalid.
-    pub fn purify_history(messages: &mut Vec<Message>, strategy: PurificationStrategy) -> bool {
+    pub fn purify_history(messages: &mut [Message], strategy: PurificationStrategy) -> bool {
         let protected_last_n = match strategy {
             PurificationStrategy::Soft => 4, // Protect last ~2 turns (User-AI-User-AI)
             PurificationStrategy::Aggressive => 0, // No protection
@@ -64,7 +64,7 @@ impl ContextManager {
     }
 
     /// Internal helper to strip thinking blocks from messages outside the protected range
-    fn strip_thinking_blocks(messages: &mut Vec<Message>, protected_last_n: usize) -> bool {
+    fn strip_thinking_blocks(messages: &mut [Message], protected_last_n: usize) -> bool {
         let total_msgs = messages.len();
         if total_msgs == 0 {
             return false;
@@ -213,7 +213,7 @@ impl ContextManager {
     ///
     /// Returns true if any thinking blocks were compressed
     pub fn compress_thinking_preserve_signature(
-        messages: &mut Vec<Message>,
+        messages: &mut [Message],
         protected_last_n: usize,
     ) -> bool {
         let total_msgs = messages.len();
@@ -373,19 +373,17 @@ fn identify_tool_rounds(messages: &[Message]) -> Vec<ToolRound> {
 
     for (i, msg) in messages.iter().enumerate() {
         match msg.role.as_str() {
-            "assistant" => {
-                if has_tool_use(&msg.content) {
-                    // Save previous round if exists
-                    if let Some(round) = current_round.take() {
-                        rounds.push(round);
-                    }
-                    // Start new round
-                    current_round = Some(ToolRound {
-                        _assistant_index: i,
-                        tool_result_indices: Vec::new(),
-                        indices: vec![i],
-                    });
+            "assistant" if has_tool_use(&msg.content) => {
+                // Save previous round if exists
+                if let Some(round) = current_round.take() {
+                    rounds.push(round);
                 }
+                // Start new round
+                current_round = Some(ToolRound {
+                    _assistant_index: i,
+                    tool_result_indices: Vec::new(),
+                    indices: vec![i],
+                });
             }
             "user" => {
                 if let Some(ref mut round) = current_round {

@@ -361,7 +361,7 @@ pub fn inject_google_search_tool(body: &mut Value, _mapped_model: Option<&str>) 
         if let Some(tools_arr) = tools_entry.as_array_mut() {
             let has_functions = tools_arr.iter().any(|t| {
                 t.as_object()
-                    .map_or(false, |o| o.contains_key("functionDeclarations"))
+                    .is_some_and(|o| o.contains_key("functionDeclarations"))
             });
 
             // [FIX] v1internal (cloudcode-pa) does NOT support mixing googleSearch

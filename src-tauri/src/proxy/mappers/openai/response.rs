@@ -172,7 +172,7 @@ pub fn transform_openai_response(
     }
 
     // Extract and map usage metadata from Gemini to OpenAI format
-    let usage = raw.get("usageMetadata").and_then(|u| {
+    let usage = raw.get("usageMetadata").map(|u| {
         let prompt_tokens = u
             .get("promptTokenCount")
             .and_then(|v| v.as_u64())
@@ -190,7 +190,7 @@ pub fn transform_openai_response(
             .and_then(|v| v.as_u64())
             .map(|v| v as u32);
 
-        Some(super::models::OpenAIUsage {
+        super::models::OpenAIUsage {
             prompt_tokens,
             completion_tokens,
             total_tokens,
@@ -198,7 +198,7 @@ pub fn transform_openai_response(
                 cached_tokens: Some(ct),
             }),
             completion_tokens_details: None,
-        })
+        }
     });
 
     OpenAIResponse {

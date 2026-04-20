@@ -93,7 +93,7 @@ fn parse_where_output(output: &[u8]) -> Option<PathBuf> {
 
 /// 检查路径是否是 .cmd/.bat 文件
 #[cfg(target_os = "windows")]
-fn is_cmd_file(path: &PathBuf) -> bool {
+fn is_cmd_file(path: &std::path::Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .map(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"))
@@ -102,7 +102,7 @@ fn is_cmd_file(path: &PathBuf) -> bool {
 
 /// 验证路径是否安全（防止命令注入）
 #[cfg(target_os = "windows")]
-fn is_safe_path(path: &PathBuf) -> bool {
+fn is_safe_path(path: &std::path::Path) -> bool {
     // 检查路径是否存在且是文件
     if !path.exists() || !path.is_file() {
         return false;
@@ -386,6 +386,8 @@ pub fn get_sync_status(app: &CliApp, proxy_url: &str) -> (bool, bool, Option<Str
     let mut all_synced = true;
     let mut has_backup = false;
     let mut current_base_url = None;
+    let codex_re = regex::Regex::new(r#"(?m)^\s*base_url\s*=\s*['"]([^'"]+)['"]"#).unwrap();
+    let gemini_re = regex::Regex::new(r#"(?m)^GOOGLE_GEMINI_BASE_URL=(.*)$"#).unwrap();
 
     for file in &files {
         // 使用更简单的命名规则: original_name + .antigravity.bak
@@ -442,11 +444,7 @@ pub fn get_sync_status(app: &CliApp, proxy_url: &str) -> (bool, bool, Option<Str
                 }
             }
             CliApp::Codex => {
-                if file.name == "config.toml" {
-                    // 正则匹配 base_url
-                    let re =
-                        regex::Regex::new(r#"(?m)^\s*base_url\s*=\s*['"]([^'"]+)['"]"#).unwrap();
-                    if let Some(caps) = re.captures(&content) {
+                    if let Some(caps) = codex_re.captures(&content) {
                         let url = &caps[1];
                         current_base_url = Some(url.to_string());
                         if url.trim_end_matches('/') != proxy_url.trim_end_matches('/') {
@@ -456,11 +454,9 @@ pub fn get_sync_status(app: &CliApp, proxy_url: &str) -> (bool, bool, Option<Str
                         all_synced = false;
                     }
                 }
-            }
             CliApp::Gemini => {
                 if file.name == ".env" {
-                    let re = regex::Regex::new(r#"(?m)^GOOGLE_GEMINI_BASE_URL=(.*)$"#).unwrap();
-                    if let Some(caps) = re.captures(&content) {
+                    if let Some(caps) = gemini_re.captures(&content) {
                         let url = caps[1].trim();
                         current_base_url = Some(url.to_string());
                         if url.trim_end_matches('/') != proxy_url.trim_end_matches('/') {

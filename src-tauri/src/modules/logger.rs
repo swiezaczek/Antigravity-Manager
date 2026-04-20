@@ -109,10 +109,9 @@ pub fn cleanup_old_logs(days_to_keep: u64) -> Result<(), String> {
     let entries =
         fs::read_dir(&log_dir).map_err(|e| format!("Failed to read log directory: {}", e))?;
 
-    for entry in entries {
-        if let Ok(entry) = entry {
-            let path = entry.path();
-            if !path.is_file() {
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
                 continue;
             }
 
@@ -126,7 +125,6 @@ pub fn cleanup_old_logs(days_to_keep: u64) -> Result<(), String> {
                 let size = metadata.len();
                 entries_info.push((path, size, modified_secs));
             }
-        }
     }
 
     let mut deleted_count = 0;
@@ -199,13 +197,11 @@ pub fn clear_logs() -> Result<(), String> {
         // Iterate through all files in directory and truncate instead of deleting directory
         let entries =
             fs::read_dir(&log_dir).map_err(|e| format!("Failed to read log directory: {}", e))?;
-        for entry in entries {
-            if let Ok(entry) = entry {
-                let path = entry.path();
-                if path.is_file() {
-                    // Open file in truncation mode, set size to 0
-                    let _ = fs::OpenOptions::new().write(true).truncate(true).open(path);
-                }
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                // Open file in truncation mode, set size to 0
+                let _ = fs::OpenOptions::new().write(true).truncate(true).open(path);
             }
         }
     }

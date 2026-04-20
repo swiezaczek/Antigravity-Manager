@@ -685,18 +685,17 @@ impl TokenManager {
                     .get("protected_models")
                     .and_then(|v| v.as_array());
 
-                let is_protected = protected_models.map_or(false, |arr| {
+                let is_protected = protected_models.is_some_and(|arr| {
                     arr.iter().any(|m| m.as_str() == Some(std_id as &str))
                 });
 
-                if is_protected {
-                    if self
+                if is_protected
+                    && self
                         .restore_quota_protection(account_json, &account_id, account_path, std_id)
                         .await
                         .unwrap_or(false)
-                    {
-                        changed = true;
-                    }
+                {
+                    changed = true;
                 }
             }
         }
@@ -711,10 +710,7 @@ impl TokenManager {
     /// 计算账号的最大剩余配额百分比（用于排序）
     /// 返回值: Option<i32> (max_percentage)
     fn calculate_quota_stats(&self, quota: &serde_json::Value) -> Option<i32> {
-        let models = match quota.get("models").and_then(|m| m.as_array()) {
-            Some(m) => m,
-            None => return None,
-        };
+        let models = quota.get("models").and_then(|m| m.as_array())?;
 
         let mut max_percentage = 0;
         let mut has_data = false;
@@ -1524,10 +1520,9 @@ impl TokenManager {
 
             // 模式 A: 粘性会话处理 (CacheFirst 或 Balance 且有 session_id)
             if !rotate
-                && session_id.is_some()
                 && scheduling.mode != SchedulingMode::PerformanceFirst
             {
-                let sid = session_id.unwrap();
+                if let Some(sid) = session_id {
 
                 // 1. 检查会话是否已绑定账号
                 if let Some(bound_id) = self.session_accounts.get(sid).map(|v| v.clone()) {
@@ -1549,9 +1544,9 @@ impl TokenManager {
                                 bound_token.email, reset_sec
                             );
                             self.session_accounts.remove(sid);
-                        } else if !attempted.contains(&bound_id)
-                            && !(quota_protection_enabled
-                                && bound_token.protected_models.contains(&normalized_target))
+                        } else if !(attempted.contains(&bound_id)
+                            || (quota_protection_enabled
+                                && bound_token.protected_models.contains(&normalized_target)))
                         {
                             // 3. 账号可用且未被标记为尝试失败，优先复用
                             tracing::debug!("Sticky Session: Successfully reusing bound account {} for session {}", bound_token.email, sid);
@@ -1569,6 +1564,7 @@ impl TokenManager {
                             sid
                         );
                         self.session_accounts.remove(sid);
+                    }
                     }
                 }
             }
@@ -1591,8 +1587,8 @@ impl TokenManager {
                             if !self
                                 .is_rate_limited(&found.account_id, Some(&normalized_target))
                                 .await
-                                && !(quota_protection_enabled
-                                    && found.protected_models.contains(&normalized_target))
+                                && (!quota_protection_enabled
+                                    || !found.protected_models.contains(&normalized_target))
                             {
                                 tracing::debug!(
                                     "60s Window: Force reusing last account: {}",
@@ -1634,8 +1630,8 @@ impl TokenManager {
                                         &t.account_id,
                                         Some(&normalized_target),
                                     )
-                                    && !(quota_protection_enabled
-                                        && t.protected_models.contains(&normalized_target))
+                                    && (!quota_protection_enabled
+                                        || !t.protected_models.contains(&normalized_target))
                             });
 
                             if let Some(t) = retry_token {
@@ -1657,8 +1653,8 @@ impl TokenManager {
                                 // 再次尝试选择账号
                                 let final_token = tokens_snapshot.iter().find(|t| {
                                     !attempted.contains(&t.account_id)
-                                        && !(quota_protection_enabled
-                                            && t.protected_models.contains(&normalized_target))
+                                        && (!quota_protection_enabled
+                                            || !t.protected_models.contains(&normalized_target))
                                 });
 
                                 if let Some(t) = final_token {
@@ -1682,8 +1678,8 @@ impl TokenManager {
                             !attempted.contains(&t.account_id)
                                 && !self
                                     .is_rate_limited_sync(&t.account_id, Some(&normalized_target))
-                                && !(quota_protection_enabled
-                                    && t.protected_models.contains(&normalized_target))
+                                && (!quota_protection_enabled
+                                    || !t.protected_models.contains(&normalized_target))
                         });
 
                         if let Some(t) = fallback_token {
@@ -2246,7 +2242,7 @@ impl TokenManager {
         // [FIX #2209] 统一归一化模型名称
         let normalized_model = model
             .as_deref()
-            .and_then(|m| crate::proxy::common::model_mapping::normalize_to_standard_id(m));
+            .and_then(crate::proxy::common::model_mapping::normalize_to_standard_id);
         let model_to_lock = normalized_model.or(model);
 
         if let Some(reset_time_str) = self.get_quota_reset_time(account_id) {
@@ -2379,7 +2375,7 @@ impl TokenManager {
     ) {
         // [FIX #2209] 统一归一化模型名称，确保锁定 Key 与负载均衡检查 Key 一致
         let normalized_model =
-            model.and_then(|m| crate::proxy::common::model_mapping::normalize_to_standard_id(m));
+            model.and_then(crate::proxy::common::model_mapping::normalize_to_standard_id);
         let model_to_track = normalized_model.as_deref().or(model);
 
         // [NEW] 检查熔断是否启用
@@ -2841,8 +2837,7 @@ fn truncate_reason(reason: &str, max_len: usize) -> String {
         let end = reason
             .char_indices()
             .map(|(i, _)| i)
-            .filter(|&i| i <= max_len - 3)
-            .last()
+            .rfind(|&i| i <= max_len - 3)
             .unwrap_or(0);
         format!("{}...", &reason[..end])
     }

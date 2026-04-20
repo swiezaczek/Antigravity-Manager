@@ -726,8 +726,8 @@ pub async fn handle_messages(
             // ===== Layer 1: Tool Message Trimming (L1 threshold) =====
             // Borrowed from Practical-Guide-to-Context-Engineering
             // Advantage: Completely cache-friendly (only removes messages, doesn't modify content)
-            if usage_ratio > threshold_l1 && !compression_applied {
-                if ContextManager::trim_tool_messages(&mut request_with_mapped.messages, 5) {
+            if usage_ratio > threshold_l1 && !compression_applied
+                && ContextManager::trim_tool_messages(&mut request_with_mapped.messages, 5) {
                     info!(
                         "[{}] [Layer-1] Tool trimming triggered (usage: {:.1}%, threshold: {:.1}%)",
                         trace_id,
@@ -759,7 +759,6 @@ pub async fn handle_messages(
                         usage_ratio = new_ratio;
                         compression_applied = false; // Allow Layer 2 to run
                     }
-                }
             }
 
             // ===== Layer 2: Thinking Content Compression (L2 threshold) =====
@@ -1505,9 +1504,7 @@ pub async fn handle_messages(
             if request_for_body.model.contains("claude-") {
                 let mut m = request_for_body.model.clone();
                 m = m.replace("-thinking", "");
-                if m.contains("claude-sonnet-4-6-") {
-                    m = "claude-sonnet-4-6".to_string();
-                } else if m.contains("claude-sonnet-4-5-") {
+                if m.contains("claude-sonnet-4-6-") || m.contains("claude-sonnet-4-5-") {
                     m = "claude-sonnet-4-6".to_string();
                 } else if m.contains("claude-opus-4-6-") {
                     m = "claude-opus-4-6".to_string();
@@ -1989,7 +1986,7 @@ fn create_warmup_response(request: &ClaudeRequest, is_stream: bool) -> Response 
 
     if is_stream {
         // 流式响应：发送标准的 SSE 事件序列
-        let events = vec![
+        let events = [
             // message_start
             format!(
                 "event: message_start\ndata: {{\"type\":\"message_start\",\"message\":{{\"id\":\"{}\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"{}\",\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{{\"input_tokens\":1,\"output_tokens\":0}}}}}}\n\n",

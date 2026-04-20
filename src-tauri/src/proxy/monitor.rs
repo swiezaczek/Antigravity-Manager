@@ -211,7 +211,7 @@ impl ProxyMonitor {
     }
 
     pub async fn get_stats(&self) -> ProxyStats {
-        let db_result = tokio::task::spawn_blocking(|| crate::modules::proxy_db::get_stats()).await;
+        let db_result = tokio::task::spawn_blocking(crate::modules::proxy_db::get_stats).await;
 
         match db_result {
             Ok(Ok(stats)) => stats,

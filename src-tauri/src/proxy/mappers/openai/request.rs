@@ -1,8 +1,6 @@
-// OpenAI → Gemini 请求转换
 use super::models::*;
 use crate::proxy::model_specs;
 use crate::proxy::token_manager::ProxyToken;
-
 use serde_json::{json, Value};
 
 pub fn transform_openai_request(
@@ -15,10 +13,7 @@ pub fn transform_openai_request(
         crate::proxy::session_manager::SessionManager::extract_openai_session_id(request);
     let message_count = request.messages.len();
     // 将 OpenAI 工具转为 Value 数组以便探测
-    let tools_val = request
-        .tools
-        .as_ref()
-        .map(|list| list.iter().map(|v| v.clone()).collect::<Vec<_>>());
+    let tools_val = request.tools.as_ref().map(|list| list.to_vec());
 
     let mapped_model_lower = mapped_model.to_lowercase();
 
@@ -152,11 +147,11 @@ pub fn transform_openai_request(
 
     // 从缓存获取当前会话的思维签名
     let thought_sig = session_thought_sig;
-    if thought_sig.is_some() {
+    if let Some(sig) = &thought_sig {
         tracing::debug!(
             "[OpenAI-Request] Using session signature (sid: {}, len: {})",
             session_id,
-            thought_sig.as_ref().unwrap().len()
+            sig.len()
         );
     }
 
@@ -311,7 +306,7 @@ pub fn transform_openai_request(
 
             // Handle tool calls (assistant message)
             if let Some(tool_calls) = &msg.tool_calls {
-                for (_index, tc) in tool_calls.iter().enumerate() {
+                for tc in tool_calls.iter() {
                     /* 暂时移除：防止 Codex CLI 界面碎片化
                     if index == 0 && parts.is_empty() {
                          if mapped_model.contains("gemini-3") {
@@ -762,16 +757,12 @@ pub fn transform_openai_request(
 
 fn enforce_uppercase_types(value: &mut Value) {
     if let Value::Object(map) = value {
-        if let Some(type_val) = map.get_mut("type") {
-            if let Value::String(ref mut s) = type_val {
-                *s = s.to_uppercase();
-            }
+        if let Some(Value::String(ref mut s)) = map.get_mut("type") {
+            *s = s.to_uppercase();
         }
-        if let Some(properties) = map.get_mut("properties") {
-            if let Value::Object(ref mut props) = properties {
-                for v in props.values_mut() {
-                    enforce_uppercase_types(v);
-                }
+        if let Some(Value::Object(ref mut props)) = map.get_mut("properties") {
+            for v in props.values_mut() {
+                enforce_uppercase_types(v);
             }
         }
         if let Some(items) = map.get_mut("items") {
@@ -866,13 +857,8 @@ mod tests {
 
         // 验证非 Gemini 模型（如 Claude 原生路径，假设映射后名不含 gemini）则不应截断
         // 注意：这里的 transform_openai_request 第三个参数是 mapped_model
-        let (result_claude, _, _) =
+        let (_result_claude, _, _) =
             transform_openai_request(&req, "test-v", "claude-3-7-sonnet", None);
-        let _budget_claude = result_claude["request"]["generationConfig"]["thinkingConfig"]
-            ["thinkingBudget"]
-            .as_i64();
-        // 如果不是 gemini 模型且协议中没带 thinking 配置，可能会是 None 或 32000
-        // 在该测试环境下，由于模拟的是 OpenAI 格式转 Gemini 路径，如果没有 gemini 关键词通常不进入 thinking 逻辑
         // 我们只需确保 gemini 路径正确受限即可。
 
         // 恢复默认配置

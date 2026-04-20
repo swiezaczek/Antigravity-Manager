@@ -26,6 +26,7 @@ use futures::Stream;
 use std::pin::Pin;
 
 /// 创建从 Gemini SSE 流到 Claude SSE 流的转换
+#[allow(clippy::too_many_arguments)]
 pub fn create_claude_sse_stream<S, E>(
     mut gemini_stream: Pin<Box<S>>,
     trace_id: String,
@@ -218,13 +219,13 @@ fn process_sse_line(
     }
 
     // 捕获 groundingMetadata (Web Search)
-    if let Some(candidate) = raw_json.get("candidates").and_then(|c| c.get(0)) {
+    if let Some(candidate) = raw_json.get("candidates").and_then(|c| c.as_array()?.first()) {
         if let Some(grounding) = candidate.get("groundingMetadata") {
             // 提取搜索词
             if let Some(query) = grounding
                 .get("webSearchQueries")
                 .and_then(|v| v.as_array())
-                .and_then(|arr| arr.get(0))
+                .and_then(|arr| arr.first())
                 .and_then(|v| v.as_str())
             {
                 state.web_search_query = Some(query.to_string());
@@ -246,7 +247,7 @@ fn process_sse_line(
     // 处理所有 parts
     if let Some(parts) = raw_json
         .get("candidates")
-        .and_then(|c| c.get(0))
+        .and_then(|c| c.as_array()?.first())
         .and_then(|cand| cand.get("content"))
         .and_then(|content| content.get("parts"))
         .and_then(|p| p.as_array())
@@ -267,7 +268,7 @@ fn process_sse_line(
     /*
     if let Some(grounding) = raw_json
         .get("candidates")
-        .and_then(|c| c.get(0))
+        .and_then(|c| c.as_array()?.first())
         .and_then(|cand| cand.get("groundingMetadata"))
     {
         if let Some(citation_chunks) = process_grounding_metadata(grounding, state) {
@@ -279,7 +280,7 @@ fn process_sse_line(
     // 检查是否结束
     if let Some(finish_reason) = raw_json
         .get("candidates")
-        .and_then(|c| c.get(0))
+        .and_then(|c| c.as_array()?.first())
         .and_then(|cand| cand.get("finishReason"))
         .and_then(|f| f.as_str())
     {

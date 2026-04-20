@@ -271,14 +271,14 @@ pub async fn fetch_quota_with_cache(
         {
             Ok(response) => {
                 // Convert HTTP error status to AppError
-                if let Err(_) = response.error_for_status_ref() {
+                if response.error_for_status_ref().is_err() {
                     let status = response.status();
 
                     // ✅ Special handling for 403 Forbidden - return directly, no retry
                     if status == rquest::StatusCode::FORBIDDEN {
-                        crate::modules::logger::log_warn(&format!(
+                        crate::modules::logger::log_warn(
                             "Account unauthorized (403 Forbidden), marking as forbidden"
-                        ));
+                        );
                         let mut q = QuotaData::new();
                         q.is_forbidden = true;
                         q.subscription_tier = subscription_tier.clone();
@@ -661,20 +661,17 @@ pub async fn warm_up_all_accounts() -> Result<String, String> {
                     }
 
                     for handle in handles {
-                        match handle.await {
-                            Ok((true, email, model)) => {
-                                success += 1;
-                                let history_key = format!("{}:{}:100", email, model);
-                                crate::modules::scheduler::record_warmup_history(
-                                    &history_key,
-                                    now_ts,
-                                );
-                            }
-                            _ => {}
+                        if let Ok((true, email, model)) = handle.await {
+                            success += 1;
+                            let history_key = format!("{}:{}:100", email, model);
+                            crate::modules::scheduler::record_warmup_history(
+                                &history_key,
+                                now_ts,
+                            );
                         }
                     }
 
-                    if batch_idx < (warmup_items.len() + batch_size - 1) / batch_size - 1 {
+                    if batch_idx < warmup_items.len().div_ceil(batch_size) - 1 {
                         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
                     }
                 }

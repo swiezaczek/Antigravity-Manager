@@ -1,6 +1,6 @@
 use crate::modules::process;
 
-use std::path::PathBuf;
+
 
 /// Antigravity 版本信息
 #[derive(Debug, Clone)]
@@ -60,7 +60,7 @@ pub fn get_antigravity_version() -> Result<AntigravityVersion, String> {
 
 /// macOS: 从 Info.plist 读取版本
 #[cfg(target_os = "macos")]
-fn get_version_macos(exe_path: &PathBuf) -> Result<AntigravityVersion, String> {
+fn get_version_macos(exe_path: &std::path::Path) -> Result<AntigravityVersion, String> {
     use plist::Value;
 
     // exe_path 可能是 /Applications/Antigravity.app 或内部可执行文件
@@ -78,7 +78,7 @@ fn get_version_macos(exe_path: &PathBuf) -> Result<AntigravityVersion, String> {
     }
 
     let content =
-        fs::read(&info_plist_path).map_err(|e| format!("Failed to read Info.plist: {}", e))?;
+        std::fs::read(&info_plist_path).map_err(|e| format!("Failed to read Info.plist: {}", e))?;
 
     let plist: Value =
         plist::from_bytes(&content).map_err(|e| format!("Failed to parse Info.plist: {}", e))?;
@@ -105,7 +105,7 @@ fn get_version_macos(exe_path: &PathBuf) -> Result<AntigravityVersion, String> {
 
 /// Windows: 从可执行文件元数据读取版本
 #[cfg(target_os = "windows")]
-fn get_version_windows(exe_path: &PathBuf) -> Result<AntigravityVersion, String> {
+fn get_version_windows(exe_path: &std::path::Path) -> Result<AntigravityVersion, String> {
     use crate::utils::command::CommandExtWrapper;
     use std::process::Command;
 
@@ -141,7 +141,7 @@ fn get_version_windows(exe_path: &PathBuf) -> Result<AntigravityVersion, String>
 
 /// Linux: 从 package.json 或 --version 参数读取
 #[cfg(target_os = "linux")]
-fn get_version_linux(exe_path: &PathBuf) -> Result<AntigravityVersion, String> {
+fn get_version_linux(exe_path: &std::path::Path) -> Result<AntigravityVersion, String> {
     use std::process::Command;
 
     // 方法1: 尝试执行 --version
@@ -171,7 +171,7 @@ fn get_version_linux(exe_path: &PathBuf) -> Result<AntigravityVersion, String> {
     if let Some(parent) = exe_path.parent() {
         let package_json = parent.join("resources/app/package.json");
         if package_json.exists() {
-            if let Ok(content) = fs::read_to_string(&package_json) {
+            if let Ok(content) = std::fs::read_to_string(&package_json) {
                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
                     if let Some(version) = json.get("version").and_then(|v| v.as_str()) {
                         return Ok(AntigravityVersion {

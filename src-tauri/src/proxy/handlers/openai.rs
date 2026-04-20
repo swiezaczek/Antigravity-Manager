@@ -44,7 +44,7 @@ pub async fn handle_chat_completions(
             "[ChatRedirection] Redirecting model {} to image generations",
             model_name
         );
-        return intercept_chat_to_image(state, body, &model_name.as_str()).await;
+        return intercept_chat_to_image(state, body, model_name.as_str()).await;
     }
 
     // [FIX] 保存原始请求体的完整副本，用于日志记录
@@ -53,7 +53,7 @@ pub async fn handle_chat_completions(
 
     // [NEW] 自动检测并转换 Responses 格式
     // 如果请求包含 instructions 或 input 但没有 messages，则认为是 Responses 格式
-    let is_responses_format = !body.get("messages").is_some()
+    let is_responses_format = body.get("messages").is_none()
         && (body.get("instructions").is_some() || body.get("input").is_some());
 
     if is_responses_format {
@@ -68,7 +68,7 @@ pub async fn handle_chat_completions(
                 });
 
                 // 初始化 messages 数组
-                if !body.get("messages").is_some() {
+                if body.get("messages").is_none() {
                     body["messages"] = json!([]);
                 }
 
@@ -174,10 +174,7 @@ pub async fn handle_chat_completions(
 
     for attempt in 0..max_attempts {
         // 将 OpenAI 工具转为 Value 数组以便探测联网
-        let tools_val: Option<Vec<Value>> = openai_req
-            .tools
-            .as_ref()
-            .map(|list| list.iter().cloned().collect());
+        let tools_val: Option<Vec<Value>> = openai_req.tools.clone();
         let config = crate::proxy::mappers::common_utils::resolve_request_config(
             &openai_req.model,
             &mapped_model,
@@ -707,18 +704,14 @@ pub async fn handle_chat_completions(
         }
 
         // 只有 403 (权限/地区限制) 和 401 (认证失效) 触发账号轮换
-        if status_code == 403 || status_code == 401 {
-            if apply_retry_strategy(
-                RetryStrategy::FixedDelay(Duration::from_millis(200)),
-                attempt,
-                max_attempts,
-                status_code,
-                &trace_id,
-            )
-            .await
-            {
-                continue;
-            }
+        if (status_code == 403 || status_code == 401) && apply_retry_strategy(
+            RetryStrategy::FixedDelay(Duration::from_millis(200)),
+            attempt,
+            max_attempts,
+            status_code,
+            &trace_id,
+        ).await {
+            continue;
         }
 
         // 只有 403 (权限/地区限制) 和 401 (认证失效) 触发账号轮换
@@ -1205,10 +1198,7 @@ pub async fn handle_completions(
     for attempt in 0..max_attempts {
         // 3. 模型配置解析
         // 将 OpenAI 工具转为 Value 数组以便探测联网
-        let tools_val: Option<Vec<Value>> = openai_req
-            .tools
-            .as_ref()
-            .map(|list| list.iter().cloned().collect());
+        let tools_val: Option<Vec<Value>> = openai_req.tools.clone();
         let config = crate::proxy::mappers::common_utils::resolve_request_config(
             &openai_req.model,
             &mapped_model,
@@ -1778,8 +1768,8 @@ async fn intercept_chat_to_image(
 
                 let sse_data = format!(
                     "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
-                    chunk.to_string(),
-                    done_chunk.to_string()
+                    chunk,
+                    done_chunk
                 );
 
                 let body = Body::from(sse_data);
@@ -1814,7 +1804,7 @@ async fn intercept_chat_to_image(
                     .into_response())
             }
         }
-        Err(e) => Err(e.into()), // using Err directly is fine since return type handles it
+        Err(e) => Err(e), // using Err directly is fine since return type handles it
     }
 }
 

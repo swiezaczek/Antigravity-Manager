@@ -122,7 +122,7 @@ pub fn update_image_thinking_mode(mode: Option<String>) {
 }
 
 /// 全局系统提示词配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct GlobalSystemPromptConfig {
     /// 是否启用全局系统提示词
     #[serde(default)]
@@ -132,34 +132,21 @@ pub struct GlobalSystemPromptConfig {
     pub content: String,
 }
 
-impl Default for GlobalSystemPromptConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            content: String::new(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ProxyAuthMode {
     Off,
     Strict,
     AllExceptHealth,
+    #[default]
     Auto,
 }
 
-impl Default for ProxyAuthMode {
-    fn default() -> Self {
-        Self::Auto
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ZaiDispatchMode {
     /// Never use z.ai.
+    #[default]
     Off,
     /// Use z.ai for all Anthropic protocol requests.
     Exclusive,
@@ -167,12 +154,6 @@ pub enum ZaiDispatchMode {
     Pooled,
     /// Use z.ai only when the Google pool is unavailable.
     Fallback,
-}
-
-impl Default for ZaiDispatchMode {
-    fn default() -> Self {
-        Self::Off
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -198,7 +179,7 @@ impl Default for ZaiModelDefaults {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ZaiMcpConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -208,17 +189,6 @@ pub struct ZaiMcpConfig {
     pub web_reader_enabled: bool,
     #[serde(default)]
     pub vision_enabled: bool,
-}
-
-impl Default for ZaiMcpConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            web_search_enabled: false,
-            web_reader_enabled: false,
-            vision_enabled: false,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -315,10 +285,11 @@ fn default_threshold_l3() -> f32 {
 
 /// Thinking Budget 模式
 /// 控制如何处理调用方传入的 thinking_budget 参数
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ThinkingBudgetMode {
     /// 自动限制：对特定模型（Flash/Thinking）应用 24576 上限
+    #[default]
     Auto,
     /// 透传：完全使用调用方传入的值，不做任何修改
     Passthrough,
@@ -326,12 +297,6 @@ pub enum ThinkingBudgetMode {
     Custom,
     /// 自适应：使用 effort 参数控制思考强度 (Claude 4.6+)
     Adaptive,
-}
-
-impl Default for ThinkingBudgetMode {
-    fn default() -> Self {
-        Self::Auto
-    }
 }
 
 /// Thinking Budget 配置
@@ -370,21 +335,12 @@ fn default_false() -> bool {
     false
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DebugLoggingConfig {
     #[serde(default)]
     pub enabled: bool,
     #[serde(default)]
     pub output_dir: Option<String>,
-}
-
-impl Default for DebugLoggingConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            output_dir: None,
-        }
-    }
 }
 
 /// IP 黑名单配置
@@ -434,7 +390,7 @@ impl Default for IpWhitelistConfig {
 }
 
 /// 安全监控配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SecurityMonitorConfig {
     /// IP 黑名单配置
     #[serde(default)]
@@ -443,15 +399,6 @@ pub struct SecurityMonitorConfig {
     /// IP 白名单配置
     #[serde(default)]
     pub whitelist: IpWhitelistConfig,
-}
-
-impl Default for SecurityMonitorConfig {
-    fn default() -> Self {
-        Self {
-            blacklist: IpBlacklistConfig::default(),
-            whitelist: IpWhitelistConfig::default(),
-        }
-    }
 }
 
 /// 反代服务配置

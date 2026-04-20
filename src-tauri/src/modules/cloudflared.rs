@@ -16,19 +16,14 @@ const DETACHED_PROCESS: u32 = 0x00000008;
 const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
 
 /// Cloudflared隧道模式
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum TunnelMode {
     /// 快速隧道(临时URL)
+    #[default]
     Quick,
     /// 认证隧道(使用Token)
     Auth,
-}
-
-impl Default for TunnelMode {
-    fn default() -> Self {
-        Self::Quick
-    }
 }
 
 /// Cloudflared配置
@@ -61,25 +56,13 @@ impl Default for CloudflaredConfig {
 }
 
 /// Cloudflared状态
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CloudflaredStatus {
     pub installed: bool,
     pub version: Option<String>,
     pub running: bool,
     pub url: Option<String>,
     pub error: Option<String>,
-}
-
-impl Default for CloudflaredStatus {
-    fn default() -> Self {
-        Self {
-            installed: false,
-            version: None,
-            running: false,
-            url: None,
-            error: None,
-        }
-    }
 }
 
 /// Cloudflared管理器状态
@@ -92,7 +75,7 @@ pub struct CloudflaredManager {
 }
 
 impl CloudflaredManager {
-    pub fn new(data_dir: &PathBuf) -> Self {
+    pub fn new(data_dir: &std::path::Path) -> Self {
         let bin_name = if cfg!(target_os = "windows") {
             "cloudflared.exe"
         } else {
@@ -311,7 +294,7 @@ impl CloudflaredManager {
 
         *self.process.write().await = Some(child);
         self.update_status(|s| {
-            s.installed = installed.clone();
+            s.installed = installed;
             s.version = version.clone();
             s.running = true;
             s.error = None;

@@ -830,7 +830,7 @@ pub fn start_antigravity() -> Result<(), String> {
 
     #[cfg(target_os = "windows")]
     {
-        let has_args = args.as_ref().map_or(false, |a| !a.is_empty());
+        let has_args = args.as_ref().is_some_and(|a| !a.is_empty());
 
         if has_args {
             if let Some(detected_path) = get_antigravity_executable_path() {

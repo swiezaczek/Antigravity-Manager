@@ -414,7 +414,7 @@ pub fn get_accounts_dir() -> Result<PathBuf, String> {
 }
 
 /// Load account index from a specific directory (internal helper)
-fn load_account_index_in_dir(data_dir: &PathBuf) -> Result<AccountIndex, String> {
+fn load_account_index_in_dir(data_dir: &std::path::Path) -> Result<AccountIndex, String> {
     let index_path = data_dir.join(ACCOUNTS_INDEX);
 
     if !index_path.exists() {
@@ -474,7 +474,7 @@ fn load_account_index_in_dir(data_dir: &PathBuf) -> Result<AccountIndex, String>
 }
 
 /// Save account index to a specific directory (internal helper)
-fn save_account_index_in_dir(data_dir: &PathBuf, index: &AccountIndex) -> Result<(), String> {
+fn save_account_index_in_dir(data_dir: &std::path::Path, index: &AccountIndex) -> Result<(), String> {
     let index_path = data_dir.join(ACCOUNTS_INDEX);
     // Use unique temp file name per write to avoid collision
     let temp_filename = format!("{}.tmp.{}", ACCOUNTS_INDEX, Uuid::new_v4());
@@ -501,7 +501,7 @@ fn save_account_index_in_dir(data_dir: &PathBuf, index: &AccountIndex) -> Result
 }
 
 /// Rebuild AccountIndex by scanning accounts/*.json files in specific directory
-fn rebuild_index_from_accounts_in_dir(data_dir: &PathBuf) -> Result<AccountIndex, String> {
+fn rebuild_index_from_accounts_in_dir(data_dir: &std::path::Path) -> Result<AccountIndex, String> {
     let accounts_dir = data_dir.join(ACCOUNTS_DIR);
     let mut summaries = Vec::new();
 
@@ -509,7 +509,7 @@ fn rebuild_index_from_accounts_in_dir(data_dir: &PathBuf) -> Result<AccountIndex
         if let Ok(entries) = fs::read_dir(&accounts_dir) {
             for entry in entries.filter_map(|e| e.ok()) {
                 let path = entry.path();
-                if path.extension().map_or(false, |ext| ext == "json") {
+                if path.extension().is_some_and(|ext| ext == "json") {
                     if let Some(account_id) = path.file_stem().and_then(|s| s.to_str()) {
                         match load_account_at_path(&path) {
                             Ok(account) => {
@@ -559,7 +559,7 @@ fn rebuild_index_from_accounts_in_dir(data_dir: &PathBuf) -> Result<AccountIndex
 }
 
 /// Load account from a specific path (internal helper)
-fn load_account_at_path(account_path: &PathBuf) -> Result<Account, String> {
+fn load_account_at_path(account_path: &std::path::Path) -> Result<Account, String> {
     let content = fs::read_to_string(account_path)
         .map_err(|e| format!("failed_to_read_account_data: {}", e))?;
     serde_json::from_str(&content).map_err(|e| format!("failed_to_parse_account_data: {}", e))
@@ -593,8 +593,8 @@ fn sanitize_index_content(raw: &[u8]) -> String {
 
 /// Best-effort save of recovered index without deadlocking
 fn try_save_recovered_index(
-    data_dir: &PathBuf,
-    _index_path: &PathBuf,
+    data_dir: &std::path::Path,
+    _index_path: &std::path::Path,
     index: &AccountIndex,
     corrupt_content: Option<&[u8]>,
 ) -> Result<(), String> {
@@ -646,7 +646,7 @@ pub fn save_account_index(index: &AccountIndex) -> Result<(), String> {
 
 /// Platform-specific atomic file replacement
 #[cfg(target_os = "windows")]
-fn atomic_replace_file(src: &PathBuf, dst: &PathBuf) -> Result<(), String> {
+fn atomic_replace_file(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;
 
     type Bool = i32;
@@ -691,7 +691,7 @@ fn atomic_replace_file(src: &PathBuf, dst: &PathBuf) -> Result<(), String> {
 
 /// Non-Windows: use standard rename
 #[cfg(not(target_os = "windows"))]
-fn atomic_replace_file(src: &PathBuf, dst: &PathBuf) -> Result<(), String> {
+fn atomic_replace_file(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String> {
     fs::rename(src, dst).map_err(|e| format!("rename failed: {}", e))
 }
 
@@ -1486,8 +1486,8 @@ pub fn update_account_quota(account_id: &str, quota: QuotaData) -> Result<(), St
                 if account.proxy_disabled
                     && account
                         .proxy_disabled_reason
-                        .as_ref()
-                        .map_or(false, |r| r == "quota_protection")
+                        .as_deref()
+                        == Some("quota_protection")
                 {
                     crate::modules::logger::log_info(&format!(
                         "[Quota] Migrating account {} from account-level to model-level protection",
@@ -1678,7 +1678,7 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
 
         // Get display name (incidental to Token refresh)
         let name = if account.name.is_none()
-            || account.name.as_ref().map_or(false, |n| n.trim().is_empty())
+            || account.name.as_ref().is_some_and(|n| n.trim().is_empty())
         {
             match oauth::get_user_info(&token.access_token, Some(&account.id)).await {
                 Ok(user_info) => user_info.get_display_name(),
@@ -1693,7 +1693,7 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
     }
 
     // 0. Supplement display name (if missing or upper step failed)
-    if account.name.is_none() || account.name.as_ref().map_or(false, |n| n.trim().is_empty()) {
+    if account.name.is_none() || account.name.as_ref().is_some_and(|n| n.trim().is_empty()) {
         modules::logger::log_info(&format!(
             "Account {} missing display name, attempting to fetch...",
             account.email
@@ -1747,9 +1747,7 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
     }
 
     // 3. Handle 401 error
-    if let Err(AppError::Network(_, status)) = result {
-        if let Some(code) = status {
-            if code == 401 {
+    if let Err(AppError::Network(_, Some(401))) = result {
                 modules::logger::log_warn(&format!(
                     "401 Unauthorized for {}, forcing refresh...",
                     account.email
@@ -1798,7 +1796,7 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
 
                 // Re-fetch display name
                 let name = if account.name.is_none()
-                    || account.name.as_ref().map_or(false, |n| n.trim().is_empty())
+                    || account.name.as_ref().is_some_and(|n| n.trim().is_empty())
                 {
                     match oauth::get_user_info(&token_res.access_token, Some(&account.id)).await {
                         Ok(user_info) => user_info.get_display_name(),
@@ -1838,14 +1836,10 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
                     }
                 }
 
-                if let Err(AppError::Network(_, status)) = retry_result {
-                    if let Some(code) = status {
-                        if code == 403 {
-                            let mut q = QuotaData::new();
-                            q.is_forbidden = true;
-                            return Ok(q);
-                        }
-                    }
+                if let Err(AppError::Network(_, Some(403))) = retry_result {
+                    let mut q = QuotaData::new();
+                    q.is_forbidden = true;
+                    return Ok(q);
                 }
 
                 match retry_result {
@@ -1869,8 +1863,6 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
                     }
                 }
             }
-        }
-    }
 
     // fetch_quota already handles 403, with additional local fallback/validation handling.
     match result {
