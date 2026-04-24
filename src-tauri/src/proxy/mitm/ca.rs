@@ -43,7 +43,7 @@ impl CertificateAuthority {
     pub fn load_or_generate() -> Result<Self, String> {
         let (cert_path, key_path) = get_ca_paths();
 
-        let mut is_new = false;
+        let mut _is_new = false;
         let ca = if key_path.exists() {
             tracing::info!("[MITM-CA] Loading existing CA key from {:?}", key_path);
             let ca = Self::load_key_and_regenerate(&key_path)?;
@@ -53,13 +53,13 @@ impl CertificateAuthority {
             tracing::info!("[MITM-CA] Generating new CA certificate");
             let ca = Self::generate_new()?;
             ca.save_to_files(&cert_path, &key_path)?;
-            is_new = true;
+            _is_new = true;
             ca
         };
 
         // On Windows, Go doesn't respect SSL_CERT_FILE. We must inject it into the OS trust store.
         #[cfg(target_os = "windows")]
-        if let Err(e) = ca.install_to_system_store(&cert_path, is_new) {
+        if let Err(e) = ca.install_to_system_store(&cert_path, _is_new) {
             tracing::warn!("[MITM-CA] Failed to install CA to system store: {}", e);
         }
 
