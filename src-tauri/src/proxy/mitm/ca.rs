@@ -81,7 +81,7 @@ impl CertificateAuthority {
         if is_new || std::env::var("FORCE_CA_INSTALL").is_ok() {
             tracing::info!("[MITM-CA] Installing MITM CA to Windows CurrentUser Root store...");
             let output = std::process::Command::new("certutil")
-                .args(&["-addstore", "-user", "Root"])
+                .args(["-addstore", "-user", "Root"])
                 .arg(cert_path)
                 .output()
                 .map_err(|e| format!("certutil failed: {}", e))?;

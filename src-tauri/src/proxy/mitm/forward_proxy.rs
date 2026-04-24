@@ -75,7 +75,7 @@ async fn handle_client(
     reader.read_line(&mut request_line).await?;
 
     // Parse: "CONNECT host:port HTTP/1.1\r\n"
-    let parts: Vec<&str> = request_line.trim().split_whitespace().collect();
+    let parts: Vec<&str> = request_line.split_whitespace().collect();
     if parts.len() < 3 || parts[0] != "CONNECT" {
         // Not a CONNECT request — return 400
         stream
@@ -152,7 +152,7 @@ async fn handle_tunneled_request(
         return Ok(false); // Connection closed
     }
 
-    let parts: Vec<&str> = request_line.trim().split_whitespace().collect();
+    let parts: Vec<&str> = request_line.split_whitespace().collect();
     if parts.len() < 3 {
         return Ok(false);
     }
@@ -419,7 +419,7 @@ fn spoof_headers(headers: Vec<String>, account_id: Option<&str>) -> Vec<String> 
         .and_then(|acc| acc.device_profile);
 
     let spoof_session_id = account_id
-        .map(|id| crate::proxy::common::session::get_or_create_vscode_session_id(id))
+        .map(crate::proxy::common::session::get_or_create_vscode_session_id)
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let spoof_trace_id = uuid::Uuid::new_v4().to_string().replace("-", ""); // trace context uses hex
 
