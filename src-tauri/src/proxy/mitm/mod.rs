@@ -4,6 +4,7 @@
 //! inspects requests inside TLS tunnels, and selectively drops
 //! native telemetry that would conflict with our synthetic metrics.
 
+#![allow(dead_code)]
 pub mod ca;
 pub mod forward_proxy;
 pub mod rules;

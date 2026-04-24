@@ -393,6 +393,9 @@ impl ProxyPoolManager {
         account_id: String,
         proxy_id: String,
     ) -> Result<(), String> {
+        // [OPSEC FIX] Clear Ghost Cache for old binding before rebinding
+        crate::proxy::mitm::forward_proxy::clear_account_ghost_cache(&account_id);
+
         // 检查代理是否存在
         {
             let config = self.config.read().await;
@@ -437,6 +440,9 @@ impl ProxyPoolManager {
 
     /// 解绑账号代理
     pub async fn unbind_account_proxy(&self, account_id: String) {
+        // [OPSEC FIX] Clear Ghost Cache on unbind to prevent ETag cross-contamination
+        crate::proxy::mitm::forward_proxy::clear_account_ghost_cache(&account_id);
+
         self.account_bindings.remove(&account_id);
 
         // 持久化到配置文件

@@ -214,6 +214,8 @@ pub async fn handle_generate(
                 extra_headers.insert("x-goog-api-client".to_string(), val_str.to_string());
             }
         }
+        // [FIX] Extract requestId before consuming wrapped_body
+        let extracted_request_id = wrapped_body.get("requestId").and_then(|v| v.as_str()).map(|s| s.to_string());
 
         let call_result = match upstream
             .call_v1_internal_with_headers(
@@ -285,6 +287,31 @@ pub async fn handle_generate(
             .map(|s| s.to_string());
 
         if status.is_success() {
+            // [CRITICAL FIX] Register Trajectory Trace ID in TelemetryRegistry
+            // so MITM can attribute subsequent native telemetry to correct account
+            if let Some(ref trace_id_val) = cloud_code_trace_id {
+                crate::proxy::telemetry::registry::TelemetryRegistry::global().register(
+                    trace_id_val.clone(),
+                    access_token.clone(),
+                    project_id.clone(),
+                    account_id.clone(),
+                );
+                tracing::info!(
+                    "[Gemini] Registered trace {} → account {}",
+                    trace_id_val, account_id
+                );
+            }
+            
+            // Also register the requestId from the wrapped request body
+            if let Some(req_id) = extracted_request_id {
+                crate::proxy::telemetry::registry::TelemetryRegistry::global().register(
+                    req_id.to_string(),
+                    access_token.clone(),
+                    project_id.clone(),
+                    account_id.clone(),
+                );
+            }
+
             // 6. 响应处理
             if is_stream {
                 use axum::body::Body;

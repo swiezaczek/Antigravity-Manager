@@ -1154,8 +1154,8 @@ impl TokenManager {
             );
         }
 
-        // 【优化 Issue #284】添加 5 秒超时，防止死锁
-        let timeout_duration = std::time::Duration::from_secs(5);
+        // 【优化 Issue #284】添加 30 秒超时，给予后台刷新足够的缓冲时间
+        let timeout_duration = std::time::Duration::from_secs(30);
         match tokio::time::timeout(
             timeout_duration,
             self.get_token_internal(quota_group, force_rotate, session_id, target_model),
@@ -1164,7 +1164,7 @@ impl TokenManager {
         {
             Ok(result) => result,
             Err(_) => Err(
-                "Token acquisition timeout (5s) - system too busy or deadlock detected".to_string(),
+                "Token acquisition timeout (30s) - system too busy or deadlock detected".to_string(),
             ),
         }
     }
@@ -1381,61 +1381,85 @@ impl TokenManager {
                                     .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
                                     .clone();
 
-                                // 2. 尝试获取锁
-                                let _guard = refresh_mu.lock().await;
+                                let account_id_clone = token.account_id.clone();
+                                let refresh_token_clone = token.refresh_token.clone();
+                                let account_path_clone = token.account_path.clone();
+                                let email_clone = token.email.clone();
+                                let tokens_map = self.tokens.clone();
 
-                                // 3. 再次检查本账号最新状态（可能已被其他并发请求刷新完毕）
-                                let latest_token_opt =
-                                    self.tokens.get(&token.account_id).map(|r| r.clone());
-                                if let Some(latest) = latest_token_opt {
-                                    if now < latest.timestamp - 90 {
-                                        // 已经被别人刷过了，同步最新数据并跳过刷新动作
-                                        token = latest.clone();
-                                        tracing::debug!(
-                                            "账号 {} 已由并发线程刷新，跳过重复刷新",
-                                            token.email
-                                        );
-                                    } else {
-                                        // 确实需要刷新
-                                        tracing::debug!(
-                                            "账号 {} 的 token 即将过期 ({}s)，正在刷新...",
-                                            token.email,
-                                            token.timestamp - now
-                                        );
-                                        match crate::modules::oauth::refresh_access_token(
-                                            &token.refresh_token,
-                                            Some(&token.account_id),
-                                        )
-                                        .await
-                                        {
-                                            Ok(token_response) => {
-                                                token.access_token =
-                                                    token_response.access_token.clone();
-                                                token.expires_in = token_response.expires_in;
-                                                token.timestamp = now + token_response.expires_in;
+                                // [FIX #Cancellation] 利用独立后台任务保护 HTTP 请求不被外部超时 (30s) 取消
+                                let spawn_handle = tokio::spawn(async move {
+                                    // 2. 尝试获取锁
+                                    let _guard = refresh_mu.lock().await;
 
-                                                if let Some(mut entry) =
-                                                    self.tokens.get_mut(&token.account_id)
-                                                {
-                                                    entry.access_token = token.access_token.clone();
-                                                    entry.expires_in = token.expires_in;
-                                                    entry.timestamp = token.timestamp;
-                                                }
-                                                let _ = self
-                                                    .save_refreshed_token(
-                                                        &token.account_id,
-                                                        &token_response,
-                                                    )
-                                                    .await;
+                                    let bg_now = chrono::Utc::now().timestamp();
+                                    // 3. 再次检查本账号最新状态（可能已被其他并发请求刷新完毕）
+                                    if let Some(latest) = tokens_map.get(&account_id_clone) {
+                                        if bg_now < latest.timestamp - 90 {
+                                            tracing::debug!(
+                                                "账号 {} 已由并发线程刷新，跳过重复刷新",
+                                                email_clone
+                                            );
+                                            return Ok(latest.clone());
+                                        }
+                                    }
+
+                                    tracing::debug!(
+                                        "账号 {} 的 token 即将过期，后台任务发起刷新...",
+                                        email_clone
+                                    );
+                                    
+                                    match crate::modules::oauth::refresh_access_token(
+                                        &refresh_token_clone,
+                                        Some(&account_id_clone),
+                                    )
+                                    .await
+                                    {
+                                        Ok(token_response) => {
+                                            let now_refreshed = chrono::Utc::now().timestamp();
+                                            if let Some(mut entry) = tokens_map.get_mut(&account_id_clone) {
+                                                entry.access_token = token_response.access_token.clone();
+                                                entry.expires_in = token_response.expires_in;
+                                                entry.timestamp = now_refreshed + token_response.expires_in;
                                             }
-                                            Err(e) => {
-                                                tracing::warn!(
-                                                    "Preferred account token refresh failed: {}",
-                                                    e
-                                                );
-                                                // 继续使用旧 token，让后续逻辑处理失败
+
+                                            // 原子化磁盘保存，无需借用 `TokenManager` 实例
+                                            if let Ok(content_str) = tokio::fs::read_to_string(&account_path_clone).await {
+                                                if let Ok(mut content) = serde_json::from_str::<serde_json::Value>(&content_str) {
+                                                    content["token"]["access_token"] = serde_json::Value::String(token_response.access_token.clone());
+                                                    content["token"]["expires_in"] = serde_json::Value::Number(token_response.expires_in.into());
+                                                    content["token"]["expiry_timestamp"] = serde_json::Value::Number((now_refreshed + token_response.expires_in).into());
+                                                    let _ = tokio::fs::write(&account_path_clone, serde_json::to_string_pretty(&content).unwrap()).await;
+                                                }
+                                            }
+
+                                            if let Some(latest) = tokens_map.get(&account_id_clone) {
+                                                Ok(latest.clone())
+                                            } else {
+                                                Err("Refreshed token disappeared from memory cache".to_string())
                                             }
                                         }
+                                        Err(e) => Err(e),
+                                    }
+                                });
+
+                                match spawn_handle.await.unwrap_or_else(|_| Err("Refresh background task cancelled or panicked".to_string())) {
+                                    Ok(latest) => {
+                                        token = latest;
+                                        tracing::debug!("Token 刷新成功！(Fixed Account Mode)");
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!("Preferred account token refresh failed: {}", e);
+                                        // 处理可能的封号风险，但作为首发账号继续传递到下层重试或报错
+                                        if e.contains("\"invalid_grant\"") || e.contains("invalid_grant") {
+                                            let _ = self
+                                                .disable_account(
+                                                    &token.account_id,
+                                                    &format!("invalid_grant: {}", e),
+                                                )
+                                                .await;
+                                        }
+                                        // 继续使用旧 token，让后续逻辑处理失败
                                     }
                                 }
                             }
@@ -1720,66 +1744,87 @@ impl TokenManager {
                     .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
                     .clone();
 
-                let _guard = refresh_mu.lock().await;
+                let account_id_clone = token.account_id.clone();
+                let refresh_token_clone = token.refresh_token.clone();
+                let account_path_clone = token.account_path.clone();
+                let email_clone = token.email.clone();
+                let tokens_map = self.tokens.clone();
 
-                // 再次检查最新状态
-                let latest_token_opt = self.tokens.get(&token.account_id).map(|r| r.clone());
-                if let Some(latest) = latest_token_opt {
-                    if now < latest.timestamp - 90 {
-                        token = latest.clone();
-                        tracing::debug!("账号 {} 已由并发线程在循环中刷新，跳过", token.email);
-                    } else {
-                        tracing::debug!(
-                            "账号 {} 的 token 即将过期，正在执行主路径刷新...",
-                            token.email
-                        );
-                        // 调用 OAuth 刷新 token
-                        match crate::modules::oauth::refresh_access_token(
-                            &token.refresh_token,
-                            Some(&token.account_id),
-                        )
-                        .await
-                        {
-                            Ok(token_response) => {
-                                tracing::debug!("Token 刷新成功！");
-                                token.access_token = token_response.access_token.clone();
-                                token.expires_in = token_response.expires_in;
-                                token.timestamp = now + token_response.expires_in;
+                // [FIX #Cancellation] 利用独立后台任务保护 HTTP 请求不被外部超时 (30s) 取消
+                let spawn_handle = tokio::spawn(async move {
+                    let _guard = refresh_mu.lock().await;
 
-                                if let Some(mut entry) = self.tokens.get_mut(&token.account_id) {
-                                    entry.access_token = token.access_token.clone();
-                                    entry.expires_in = token.expires_in;
-                                    entry.timestamp = token.timestamp;
-                                }
-                                let _ = self
-                                    .save_refreshed_token(&token.account_id, &token_response)
-                                    .await;
+                    let bg_now = chrono::Utc::now().timestamp();
+                    // 再次检查最新状态
+                    if let Some(latest) = tokens_map.get(&account_id_clone) {
+                        if bg_now < latest.timestamp - 90 {
+                            tracing::debug!("账号 {} 已由并发线程在循环中刷新，跳过", email_clone);
+                            return Ok(latest.clone());
+                        }
+                    }
+
+                    tracing::debug!("账号 {} 的 token 即将过期，后台任务发起刷新...", email_clone);
+                    match crate::modules::oauth::refresh_access_token(
+                        &refresh_token_clone,
+                        Some(&account_id_clone),
+                    )
+                    .await
+                    {
+                        Ok(token_response) => {
+                            let now_refreshed = chrono::Utc::now().timestamp();
+                            if let Some(mut entry) = tokens_map.get_mut(&account_id_clone) {
+                                entry.access_token = token_response.access_token.clone();
+                                entry.expires_in = token_response.expires_in;
+                                entry.timestamp = now_refreshed + token_response.expires_in;
                             }
-                            Err(e) => {
-                                tracing::error!(
-                                    "Token 刷新失败 ({}): {}，尝试下一个账号",
-                                    token.email,
-                                    e
-                                );
-                                if e.contains("\"invalid_grant\"") || e.contains("invalid_grant") {
-                                    let _ = self
-                                        .disable_account(
-                                            &token.account_id,
-                                            &format!("invalid_grant: {}", e),
-                                        )
-                                        .await;
+
+                            if let Ok(content_str) = tokio::fs::read_to_string(&account_path_clone).await {
+                                if let Ok(mut content) = serde_json::from_str::<serde_json::Value>(&content_str) {
+                                    content["token"]["access_token"] = serde_json::Value::String(token_response.access_token.clone());
+                                    content["token"]["expires_in"] = serde_json::Value::Number(token_response.expires_in.into());
+                                    content["token"]["expiry_timestamp"] = serde_json::Value::Number((now_refreshed + token_response.expires_in).into());
+                                    let _ = tokio::fs::write(&account_path_clone, serde_json::to_string_pretty(&content).unwrap()).await;
                                 }
-                                last_error = Some(format!("Token refresh failed: {}", e));
-                                attempted.insert(token.account_id.clone());
-                                if quota_group != "image_gen"
-                                    && matches!(&last_used_account_id, Some((id, _)) if id == &token.account_id)
-                                {
-                                    need_update_last_used =
-                                        Some((String::new(), std::time::Instant::now()));
-                                }
-                                continue;
+                            }
+                            
+                            if let Some(latest) = tokens_map.get(&account_id_clone) {
+                                Ok(latest.clone())
+                            } else {
+                                Err("Refreshed token disappeared from memory cache".to_string())
                             }
                         }
+                        Err(e) => Err(e),
+                    }
+                });
+
+                match spawn_handle.await.unwrap_or_else(|_| Err("Refresh background task cancelled or panicked".to_string())) {
+                    Ok(latest) => {
+                        token = latest;
+                        tracing::debug!("Token 刷新成功！");
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            "Token 刷新失败 ({}): {}，尝试下一个账号",
+                            token.email,
+                            e
+                        );
+                        if e.contains("\"invalid_grant\"") || e.contains("invalid_grant") {
+                            let _ = self
+                                .disable_account(
+                                    &token.account_id,
+                                    &format!("invalid_grant: {}", e),
+                                )
+                                .await;
+                        }
+                        last_error = Some(format!("Token refresh failed: {}", e));
+                        attempted.insert(token.account_id.clone());
+                        if quota_group != "image_gen"
+                            && matches!(&last_used_account_id, Some((id, _)) if id == &token.account_id)
+                        {
+                            need_update_last_used =
+                                Some((String::new(), std::time::Instant::now()));
+                        }
+                        continue;
                     }
                 }
             }
@@ -2694,6 +2739,26 @@ impl TokenManager {
     pub fn get_account_id_by_email(&self, email: &str) -> Option<String> {
         for entry in self.tokens.iter() {
             if entry.value().email == email {
+                return Some(entry.key().clone());
+            }
+        }
+        None
+    }
+
+    /// Lookup account ID by refresh_token (used by MITM for OAuth request attribution)
+    pub fn get_account_id_by_refresh_token(&self, refresh_token: &str) -> Option<String> {
+        for entry in self.tokens.iter() {
+            if entry.value().refresh_token == refresh_token {
+                return Some(entry.key().clone());
+            }
+        }
+        None
+    }
+
+    /// Lookup account ID by access_token (used by MITM for Bearer header attribution)
+    pub fn get_account_id_by_access_token(&self, access_token: &str) -> Option<String> {
+        for entry in self.tokens.iter() {
+            if entry.value().access_token == access_token {
                 return Some(entry.key().clone());
             }
         }

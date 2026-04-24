@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! MITM Forward Proxy Server
 //!
 //! Handles HTTP CONNECT tunneling, TLS interception with dynamic certificates,
@@ -84,7 +85,7 @@ async fn handle_client(
     }
 
     let target = parts[1]; // "host:port"
-    let (host, port) = parse_host_port(target)?;
+    let (host, _port) = parse_host_port(target)?;
 
     // Consume remaining headers (until empty line)
     loop {
@@ -233,7 +234,7 @@ async fn handle_tunneled_request(
     // LIMITATION: Tylko text/json (generateContent i podobne), zeby nie uszkodzic Protobuf!
     let is_ai_or_assist_payload =
         path.contains("generateContent") || path.contains("CodeAssist") || path.contains("chat");
-    let mut modified_body = false;
+    let mut _modified_body = false;
     if is_ai_or_assist_payload && !body.is_empty() {
         let is_json = headers.iter().any(|h| h.to_lowercase().contains("application/json"));
         if is_json {
@@ -245,20 +246,20 @@ async fn handle_tunneled_request(
                         .replace_all(&stringified_body, "file:///workspace/$1")
                         .into_owned();
                     body = stringified_body.into_bytes();
-                    modified_body = true;
+                    _modified_body = true;
                 }
             }
         } else {
             if let Some(masked_body) = crate::utils::protobuf::mask_protobuf_paths(&body) {
                 body = masked_body;
-                modified_body = true;
+                _modified_body = true;
                 tracing::debug!("[MITM] Schema-aware Protobuf workspace path masking applied");
             }
         }
     }
 
     // [OPSEC] Process Unleash payloads to scrub instanceId from JSON body
-    let mut spoofed_body = spoof_unleash_body(host, path, body, resolved_account_id.as_deref());
+    let spoofed_body = spoof_unleash_body(host, path, body, resolved_account_id.as_deref());
 
     // [OPSEC Fix] REMOVED: Body spoofing of "antigravity" → "vscode" was counter-productive.
     // Official MITM capture proves the canonical client sends "antigravity" in all v1internal bodies.
@@ -503,7 +504,7 @@ fn spoof_headers(headers: Vec<String>, account_id: Option<&str>) -> Vec<String> 
     new_headers
 }
 
-fn spoof_unleash_body(host: &str, path: &str, body: Vec<u8>, account_id: Option<&str>) -> Vec<u8> {
+fn spoof_unleash_body(_host: &str, path: &str, body: Vec<u8>, account_id: Option<&str>) -> Vec<u8> {
     if !path.contains("/api/client/register")
         && !path.contains("/api/client/metrics")
         && !path.contains("/api/client/features")
@@ -632,15 +633,15 @@ async fn forward_to_upstream_with_proxy(
     // [OPSEC Phase 10] Prevent HTTP/2 downgrade fingerprinting for native Go services.
     // Unleash (api/client) and Clearcut (/log) use HTTP/2 natively via Go LS.
     // v1internal is Node.js and must stay HTTP/1.1.
-    let allow_http2 = path.contains("/api/client")
+    let _allow_http2 = path.contains("/api/client")
         || path.contains("/log")
         || host.contains("play.googleapis.com");
-    let is_go_ls = headers.iter().any(|h| {
+    let _is_go_ls = headers.iter().any(|h| {
         let h_low = h.to_lowercase();
         h_low.starts_with("user-agent:") && !h_low.contains("nodejs")
     });
     let client = proxy_pool
-        .get_effective_standard_client(account_id, 30, allow_http2, is_go_ls)
+        .get_effective_standard_client(account_id, 30)
         .await;
 
     // [FIX] Rewrite spoofed local hosts back to canonical Google hosts for upstream resolution
@@ -791,6 +792,8 @@ async fn forward_to_upstream_with_proxy(
         || path.contains("fetchAvailableModels")
         || path.contains("fetchUserInfo")
         || path.contains("cascadeNuxes")
+        || path.contains("userinfo")
+        || path.contains("/token")
     {
         if let Ok(mut json_val) = serde_json::from_slice::<serde_json::Value>(&body_bytes) {
             fn spoof_response_data(v: &mut serde_json::Value, account_id: Option<&str>) {
@@ -809,8 +812,18 @@ async fn forward_to_upstream_with_proxy(
                     if obj.contains_key("fullName") {
                         obj.insert("fullName".to_string(), serde_json::json!("Developer Node"));
                     }
-                    if obj.contains_key("gaiaId") {
-                        // Generate a deterministic fake gaiaId based on the AccountID
+                    if obj.contains_key("name") {
+                        obj.insert("name".to_string(), serde_json::json!("Developer Node"));
+                    }
+                    if obj.contains_key("given_name") {
+                        obj.insert("given_name".to_string(), serde_json::json!("Developer"));
+                    }
+                    if obj.contains_key("family_name") {
+                        obj.insert("family_name".to_string(), serde_json::json!("Node"));
+                    }
+
+                    // Generate a deterministic fake ID for gaiaId/id/sub
+                    let fake_id = {
                         let acct_hash = account_id.unwrap_or("generic");
                         use sha2::{Digest, Sha256};
                         let mut hasher = Sha256::new();
@@ -821,8 +834,19 @@ async fn forward_to_upstream_with_proxy(
                             sum = (sum << 8) | (*byte as u64);
                         }
                         // Format it to look like a canonical gaiaId (21 digits)
-                        let fake_gaia = format!("1{:020}", sum);
-                        obj.insert("gaiaId".to_string(), serde_json::json!(fake_gaia));
+                        format!("1{:020}", sum)
+                    };
+
+                    if obj.contains_key("gaiaId") {
+                        obj.insert("gaiaId".to_string(), serde_json::json!(fake_id));
+                    }
+                    if obj.contains_key("id") {
+                        // UserInfo endpoint uses 'id' instead of 'gaiaId'
+                        obj.insert("id".to_string(), serde_json::json!(fake_id));
+                    }
+                    if obj.contains_key("sub") {
+                        // JWTs use 'sub' for the user identifier
+                        obj.insert("sub".to_string(), serde_json::json!(fake_id));
                     }
                     if obj.contains_key("picture") {
                         // [OPSEC] Prevent IDE from downloading the real Google Account avatar from lh3.googleusercontent.com
@@ -830,6 +854,45 @@ async fn forward_to_upstream_with_proxy(
                             "picture".to_string(),
                             serde_json::json!("https://lh3.googleusercontent.com/a/default-user"),
                         );
+                    }
+
+                    // [OPSEC] Deep JWT id_token PII Extraction (email, sub, picture, name)
+                    if let Some(id_token) = obj.get("id_token").and_then(|v| v.as_str()).map(|s| s.to_string()) {
+                        let parts: Vec<&str> = id_token.split('.').collect();
+                        if parts.len() == 3 {
+                            use base64::Engine;
+                            // Attempt to decode with URL_SAFE_NO_PAD (standard for JWT).
+                            // If it has padding, this might fail, but OIDC tokens generally conform.
+                            if let Ok(payload) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(parts[1]) {
+                                if let Ok(mut payload_json) = serde_json::from_slice::<serde_json::Value>(&payload) {
+                                    // Recursively apply the PII scrubber to the decoded JSON Web Token payload
+                                    spoof_response_data(&mut payload_json, account_id);
+                                    if let Ok(new_payload) = serde_json::to_string(&payload_json) {
+                                        let new_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(new_payload);
+                                        obj.insert("id_token".to_string(), serde_json::json!(format!("{}.{}.{}", parts[0], new_b64, parts[2])));
+                                        tracing::debug!("[MITM] Successfully scrubbed identity PII from an OAuth id_token.");
+                                    }
+                                }
+                            } else {
+                                tracing::debug!("[MITM] Failed to decode id_token base64 payload. PII might leak!");
+                            }
+                        }
+                    }
+
+                    // [OPSEC] Scrub email from upgradeSubscriptionUri URL parameter
+                    if let Some(uri) = obj.get("upgradeSubscriptionUri").and_then(|v| v.as_str()).map(|s| s.to_string()) {
+                        if uri.contains("Email=") || uri.contains("email=") {
+                            let acct_hash = account_id.unwrap_or("generic");
+                            use sha2::{Digest, Sha256};
+                            let mut hasher = Sha256::new();
+                            hasher.update(acct_hash.as_bytes());
+                            let result = format!("{:x}", hasher.finalize());
+                            let fake_email = format!("user.{}%40local.dev", &result[0..6]); // URL-encoded @
+
+                            let re = regex::Regex::new(r"(?i)Email=[^&]+").unwrap();
+                            let scrubbed = re.replace(&uri, format!("Email={}", fake_email)).to_string();
+                            obj.insert("upgradeSubscriptionUri".to_string(), serde_json::json!(scrubbed));
+                        }
                     }
 
                     // [OPSEC Phase 11] We NO LONGER eradicate experiment arrays here!
@@ -937,9 +1000,22 @@ fn rewrite_agent_telemetry(
 
     if let Some(uuid) = trajectory_uuid {
         tracing::debug!("[MITM] Found trajectoryId: {}", uuid);
-        if let Some(proxy_token) =
-            crate::proxy::telemetry::registry::TelemetryRegistry::global().get(&uuid)
-        {
+        
+        let direct_lookup = crate::proxy::telemetry::registry::TelemetryRegistry::global().get(&uuid);
+        let proxy_token_opt = if direct_lookup.is_some() {
+            direct_lookup
+        } else {
+            // Fallback: try extracting UUID from requestId format (agent/{ts}/{uuid}/{seq})
+            let extracted = crate::proxy::telemetry::registry::extract_trajectory_uuid(Some(&uuid));
+            if extracted != "unknown" {
+                tracing::debug!("[MITM] Fallback: extracted UUID {}", extracted);
+                crate::proxy::telemetry::registry::TelemetryRegistry::global().get(&extracted)
+            } else {
+                None
+            }
+        };
+
+        if let Some(proxy_token) = proxy_token_opt {
             let body_mb = body.len() as f64 / 1024.0 / 1024.0;
             tracing::info!("[MITM] ✓ Rewritten telemetry ({:.2}MB) for trajectory {} mapping to proxy project id {}", body_mb, uuid, proxy_token.project_id);
 

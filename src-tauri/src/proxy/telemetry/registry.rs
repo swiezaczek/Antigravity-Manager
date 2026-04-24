@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Agent Telemetry Native Proxying Registry
 //!
 //! Stores temporary mappings between an IDE's trajectory UUID and the OAuth `access_token` / `project_id`

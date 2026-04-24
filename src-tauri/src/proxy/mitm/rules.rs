@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! MITM Rules Engine
 //!
 //! Decides what to do with each intercepted HTTPS request:
@@ -6,6 +7,7 @@
 
 /// Action to take on an intercepted request.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum Action {
     /// Forward the request to the real upstream server.
     Pass,
@@ -25,14 +27,13 @@ pub enum Action {
 /// - Both Native `recordCodeAssistMetrics` and `recordTrajectoryAnalytics` are intercepted
 /// - MITM will parse the trajectoryId, lookup the proxy-allocated token, and rewrite it
 pub fn evaluate(host: &str, path: &str) -> Action {
-    if host.contains("cloudcode-pa.googleapis.com") {
-        if path.contains("recordCodeAssistMetrics") || path.contains("recordTrajectoryAnalytics") {
-            return Action::RewriteAgentTelemetry;
-        } else if path.contains("streamGenerateContent") || path.contains("generateContent") {
-            // [FIX] Forward Filar 1 Native AI traffic to the local proxy (Claude/OpenAI wrapping)
-            return Action::RouteToAxum;
-        }
-    } else if host.contains("play.googleapis.com") || is_clearcut_ip(host) {
+    // [FIX] Native Filar 1 uses purely IPs in HTTP/2. We must route strictly by path footprint.
+    if path.contains("recordCodeAssistMetrics") || path.contains("recordTrajectoryAnalytics") {
+        return Action::RewriteAgentTelemetry;
+    } else if path.contains("streamGenerateContent") || path.contains("generateContent") {
+        // [FIX] Forward Filar 1 Native AI traffic to the local proxy (Claude/OpenAI wrapping)
+        return Action::RouteToAxum;
+    } else if host.contains("play.googleapis.com") || is_clearcut_ip(host) || path.contains("OneCollector") || host.contains("events.data.microsoft.com") {
         // [OPSEC Phase 3] Drop Clearcut telemetry silently.
         // MITM deep_log.txt confirmed Go LS sends to 216.239.34.223 by IP, bypassing hostname rule.
         // Protobuf payloads contain "antigravity", "antigravity_desktop", "ideName..antigravity".

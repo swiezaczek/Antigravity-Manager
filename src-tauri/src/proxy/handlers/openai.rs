@@ -285,6 +285,8 @@ pub async fn handle_chat_completions(
                 trace_id
             );
         }
+        // [FIX] Extract requestId before consuming gemini_body
+        let extracted_request_id = gemini_body.get("requestId").and_then(|v| v.as_str()).map(|s| s.to_string());
 
         let call_result = match upstream
             .call_v1_internal_with_headers(
@@ -347,7 +349,39 @@ pub async fn handle_chat_completions(
         // [NEW] 提取实际请求的上游端点 URL，用于日志记录和排查
         let upstream_url = response.url().to_string();
         let status = response.status();
+        
+        // [NEW] 提取官方 TraceID
+        let cloud_code_trace_id = response
+            .headers()
+            .get("x-cloudaicompanion-trace-id")
+            .and_then(|h| h.to_str().ok())
+            .map(|s| s.to_string());
+
         if status.is_success() {
+            // [CRITICAL FIX] Register Trajectory Trace ID in TelemetryRegistry
+            if let Some(ref trace_id_val) = cloud_code_trace_id {
+                crate::proxy::telemetry::registry::TelemetryRegistry::global().register(
+                    trace_id_val.clone(),
+                    access_token.clone(),
+                    project_id.clone(),
+                    account_id.clone(),
+                );
+                tracing::info!(
+                    "[OpenAI] Registered trace {} → account {}",
+                    trace_id_val, account_id
+                );
+            }
+            
+            // Also register the requestId from the wrapped request body
+            if let Some(req_id) = extracted_request_id {
+                crate::proxy::telemetry::registry::TelemetryRegistry::global().register(
+                    req_id.to_string(),
+                    access_token.clone(),
+                    project_id.clone(),
+                    account_id.clone(),
+                );
+            }
+
             // 5. 处理流式 vs 非流式
             if actual_stream {
                 use axum::body::Body;

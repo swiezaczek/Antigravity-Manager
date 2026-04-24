@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! MITM Certificate Authority
 //!
 //! Generates a self-signed root CA certificate on first run and persists it.
@@ -195,8 +196,10 @@ impl CertificateAuthority {
         host_params.not_after = rcgen::date_time_ymd(2026, 12, 31);
 
         // Sign the host cert with our CA cert + CA key
+        let ca_params = build_ca_params();
+        let issuer = rcgen::Issuer::new(ca_params, &self.ca_key_pair);
         let host_cert = host_params
-            .signed_by(&host_key, &self.ca_cert, &self.ca_key_pair)
+            .signed_by(&host_key, &issuer)
             .map_err(|e| format!("Host cert sign: {}", e))?;
 
         // Build rustls ServerConfig
