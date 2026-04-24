@@ -510,7 +510,7 @@ pub async fn start_oauth_flow(
                         .filter(|e| e.path().is_dir())
                         .collect();
                     // Sort by name descending (names are timestamps, so newest first)
-                    dirs.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+                    dirs.sort_by_key(|b| std::cmp::Reverse(b.file_name()));
                     // Remove all but the most recent one
                     for old_dir in dirs.into_iter().skip(1) {
                         if let Err(e) = std::fs::remove_dir_all(old_dir.path()) {
