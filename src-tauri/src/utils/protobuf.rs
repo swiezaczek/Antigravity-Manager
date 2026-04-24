@@ -361,15 +361,19 @@ pub fn create_minimal_user_status_payload(email: &str) -> Vec<u8> {
     [encode_string_field(3, email), encode_string_field(7, email)].concat()
 }
 
+#[allow(dead_code)]
 static WORKSPACE_PATH_REGEX: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r#"(?i)file:///(?:[A-Za-z](?:%3A|:)[/\\]|/)(?:[^/&?#\s"'\\]+[/\\])+([^/&?#\s"'\\]+)"#)
-        .unwrap()
+    regex::Regex::new(
+        r#"(?i)file:///(?:[A-Za-z](?:%3A|:)[/\\]|/)(?:[^/&?#\s"'\\]+[/\\])+([^/&?#\s"'\\]+)"#,
+    )
+    .unwrap()
 });
 
 /// Schema-aware (wire-format aware) generic Protobuf string masking.
 /// Recursively iterates fields, attempting to find length-delimited (wire_type == 2) fields that
 /// contain the specified string or match a regex pattern. Re-encodes the protobuf with the new length
 /// so no corruption occurs.
+#[allow(dead_code)]
 pub fn mask_protobuf_paths(data: &[u8]) -> Option<Vec<u8>> {
     let (encoded, modified) = mask_protobuf_paths_recursive(data, &WORKSPACE_PATH_REGEX);
     if modified {
@@ -379,6 +383,7 @@ pub fn mask_protobuf_paths(data: &[u8]) -> Option<Vec<u8>> {
     }
 }
 
+#[allow(dead_code)]
 fn mask_protobuf_paths_recursive(data: &[u8], re: &regex::Regex) -> (Vec<u8>, bool) {
     let mut result = Vec::new();
     let mut offset = 0;

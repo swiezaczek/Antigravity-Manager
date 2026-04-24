@@ -239,10 +239,21 @@ impl ProxyPoolManager {
         };
 
         if let Some(proxy_id) = need_bind {
-            if let Err(e) = self.bind_account_to_proxy(account_id.to_string(), proxy_id.clone()).await {
-                tracing::warn!("[ProxyPool] Failed to auto-bind account {} to proxy: {}", account_id, e);
+            if let Err(e) = self
+                .bind_account_to_proxy(account_id.to_string(), proxy_id.clone())
+                .await
+            {
+                tracing::warn!(
+                    "[ProxyPool] Failed to auto-bind account {} to proxy: {}",
+                    account_id,
+                    e
+                );
             } else {
-                tracing::info!("[ProxyPool] Auto-bound account {} to new proxy {}", account_id, proxy_id);
+                tracing::info!(
+                    "[ProxyPool] Auto-bound account {} to new proxy {}",
+                    account_id,
+                    proxy_id
+                );
             }
         }
 

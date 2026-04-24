@@ -393,7 +393,7 @@ pub async fn start_oauth_flow(
     let auth_url = ensure_oauth_flow_prepared(app_handle.clone(), oauth_client_key).await?;
 
     let mut spawned = false;
-    if let Some(ref h) = app_handle {
+    if let Some(ref _h) = app_handle {
         let state_id = match get_oauth_flow_state().lock() {
             Ok(lock) => {
                 if let Some(s) = lock.as_ref() {
@@ -514,7 +514,11 @@ pub async fn start_oauth_flow(
                     // Remove all but the most recent one
                     for old_dir in dirs.into_iter().skip(1) {
                         if let Err(e) = std::fs::remove_dir_all(old_dir.path()) {
-                            tracing::warn!("Failed to clean old oauth_jar {:?}: {}", old_dir.path(), e);
+                            tracing::warn!(
+                                "Failed to clean old oauth_jar {:?}: {}",
+                                old_dir.path(),
+                                e
+                            );
                         } else {
                             tracing::info!("Cleaned old oauth_jar: {:?}", old_dir.path());
                         }
