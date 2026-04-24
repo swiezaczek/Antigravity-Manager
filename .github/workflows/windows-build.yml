@@ -30,8 +30,8 @@ jobs:
         env:
           # We don't necessarily need signing for a manual test build, 
           # but we'll include placeholders if they have secrets.
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_SIGNING_PRIVATE_KEY: ""
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
