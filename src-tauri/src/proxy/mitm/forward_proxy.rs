@@ -236,7 +236,9 @@ async fn handle_tunneled_request(
         path.contains("generateContent") || path.contains("CodeAssist") || path.contains("chat");
     let mut _modified_body = false;
     if is_ai_or_assist_payload && !body.is_empty() {
-        let is_json = headers.iter().any(|h| h.to_lowercase().contains("application/json"));
+        let is_json = headers
+            .iter()
+            .any(|h| h.to_lowercase().contains("application/json"));
         if is_json {
             if let Ok(mut stringified_body) = String::from_utf8(body.clone()) {
                 if stringified_body.contains("file:///") {
@@ -857,19 +859,35 @@ async fn forward_to_upstream_with_proxy(
                     }
 
                     // [OPSEC] Deep JWT id_token PII Extraction (email, sub, picture, name)
-                    if let Some(id_token) = obj.get("id_token").and_then(|v| v.as_str()).map(|s| s.to_string()) {
+                    if let Some(id_token) = obj
+                        .get("id_token")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                    {
                         let parts: Vec<&str> = id_token.split('.').collect();
                         if parts.len() == 3 {
                             use base64::Engine;
                             // Attempt to decode with URL_SAFE_NO_PAD (standard for JWT).
                             // If it has padding, this might fail, but OIDC tokens generally conform.
-                            if let Ok(payload) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(parts[1]) {
-                                if let Ok(mut payload_json) = serde_json::from_slice::<serde_json::Value>(&payload) {
+                            if let Ok(payload) =
+                                base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(parts[1])
+                            {
+                                if let Ok(mut payload_json) =
+                                    serde_json::from_slice::<serde_json::Value>(&payload)
+                                {
                                     // Recursively apply the PII scrubber to the decoded JSON Web Token payload
                                     spoof_response_data(&mut payload_json, account_id);
                                     if let Ok(new_payload) = serde_json::to_string(&payload_json) {
-                                        let new_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(new_payload);
-                                        obj.insert("id_token".to_string(), serde_json::json!(format!("{}.{}.{}", parts[0], new_b64, parts[2])));
+                                        let new_b64 =
+                                            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                                                .encode(new_payload);
+                                        obj.insert(
+                                            "id_token".to_string(),
+                                            serde_json::json!(format!(
+                                                "{}.{}.{}",
+                                                parts[0], new_b64, parts[2]
+                                            )),
+                                        );
                                         tracing::debug!("[MITM] Successfully scrubbed identity PII from an OAuth id_token.");
                                     }
                                 }
@@ -880,7 +898,11 @@ async fn forward_to_upstream_with_proxy(
                     }
 
                     // [OPSEC] Scrub email from upgradeSubscriptionUri URL parameter
-                    if let Some(uri) = obj.get("upgradeSubscriptionUri").and_then(|v| v.as_str()).map(|s| s.to_string()) {
+                    if let Some(uri) = obj
+                        .get("upgradeSubscriptionUri")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                    {
                         if uri.contains("Email=") || uri.contains("email=") {
                             let acct_hash = account_id.unwrap_or("generic");
                             use sha2::{Digest, Sha256};
@@ -890,8 +912,13 @@ async fn forward_to_upstream_with_proxy(
                             let fake_email = format!("user.{}%40local.dev", &result[0..6]); // URL-encoded @
 
                             let re = regex::Regex::new(r"(?i)Email=[^&]+").unwrap();
-                            let scrubbed = re.replace(&uri, format!("Email={}", fake_email)).to_string();
-                            obj.insert("upgradeSubscriptionUri".to_string(), serde_json::json!(scrubbed));
+                            let scrubbed = re
+                                .replace(&uri, format!("Email={}", fake_email))
+                                .to_string();
+                            obj.insert(
+                                "upgradeSubscriptionUri".to_string(),
+                                serde_json::json!(scrubbed),
+                            );
                         }
                     }
 
@@ -1000,8 +1027,9 @@ fn rewrite_agent_telemetry(
 
     if let Some(uuid) = trajectory_uuid {
         tracing::debug!("[MITM] Found trajectoryId: {}", uuid);
-        
-        let direct_lookup = crate::proxy::telemetry::registry::TelemetryRegistry::global().get(&uuid);
+
+        let direct_lookup =
+            crate::proxy::telemetry::registry::TelemetryRegistry::global().get(&uuid);
         let proxy_token_opt = if direct_lookup.is_some() {
             direct_lookup
         } else {

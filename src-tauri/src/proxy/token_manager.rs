@@ -1164,7 +1164,8 @@ impl TokenManager {
         {
             Ok(result) => result,
             Err(_) => Err(
-                "Token acquisition timeout (30s) - system too busy or deadlock detected".to_string(),
+                "Token acquisition timeout (30s) - system too busy or deadlock detected"
+                    .to_string(),
             ),
         }
     }
@@ -1408,7 +1409,7 @@ impl TokenManager {
                                         "账号 {} 的 token 即将过期，后台任务发起刷新...",
                                         email_clone
                                     );
-                                    
+
                                     match crate::modules::oauth::refresh_access_token(
                                         &refresh_token_clone,
                                         Some(&account_id_clone),
@@ -1417,41 +1418,76 @@ impl TokenManager {
                                     {
                                         Ok(token_response) => {
                                             let now_refreshed = chrono::Utc::now().timestamp();
-                                            if let Some(mut entry) = tokens_map.get_mut(&account_id_clone) {
-                                                entry.access_token = token_response.access_token.clone();
+                                            if let Some(mut entry) =
+                                                tokens_map.get_mut(&account_id_clone)
+                                            {
+                                                entry.access_token =
+                                                    token_response.access_token.clone();
                                                 entry.expires_in = token_response.expires_in;
-                                                entry.timestamp = now_refreshed + token_response.expires_in;
+                                                entry.timestamp =
+                                                    now_refreshed + token_response.expires_in;
                                             }
 
                                             // 原子化磁盘保存，无需借用 `TokenManager` 实例
-                                            if let Ok(content_str) = tokio::fs::read_to_string(&account_path_clone).await {
-                                                if let Ok(mut content) = serde_json::from_str::<serde_json::Value>(&content_str) {
-                                                    content["token"]["access_token"] = serde_json::Value::String(token_response.access_token.clone());
-                                                    content["token"]["expires_in"] = serde_json::Value::Number(token_response.expires_in.into());
-                                                    content["token"]["expiry_timestamp"] = serde_json::Value::Number((now_refreshed + token_response.expires_in).into());
-                                                    let _ = tokio::fs::write(&account_path_clone, serde_json::to_string_pretty(&content).unwrap()).await;
+                                            if let Ok(content_str) =
+                                                tokio::fs::read_to_string(&account_path_clone).await
+                                            {
+                                                if let Ok(mut content) =
+                                                    serde_json::from_str::<serde_json::Value>(
+                                                        &content_str,
+                                                    )
+                                                {
+                                                    content["token"]["access_token"] =
+                                                        serde_json::Value::String(
+                                                            token_response.access_token.clone(),
+                                                        );
+                                                    content["token"]["expires_in"] =
+                                                        serde_json::Value::Number(
+                                                            token_response.expires_in.into(),
+                                                        );
+                                                    content["token"]["expiry_timestamp"] =
+                                                        serde_json::Value::Number(
+                                                            (now_refreshed
+                                                                + token_response.expires_in)
+                                                                .into(),
+                                                        );
+                                                    let _ = tokio::fs::write(
+                                                        &account_path_clone,
+                                                        serde_json::to_string_pretty(&content)
+                                                            .unwrap(),
+                                                    )
+                                                    .await;
                                                 }
                                             }
 
-                                            if let Some(latest) = tokens_map.get(&account_id_clone) {
+                                            if let Some(latest) = tokens_map.get(&account_id_clone)
+                                            {
                                                 Ok(latest.clone())
                                             } else {
-                                                Err("Refreshed token disappeared from memory cache".to_string())
+                                                Err("Refreshed token disappeared from memory cache"
+                                                    .to_string())
                                             }
                                         }
                                         Err(e) => Err(e),
                                     }
                                 });
 
-                                match spawn_handle.await.unwrap_or_else(|_| Err("Refresh background task cancelled or panicked".to_string())) {
+                                match spawn_handle.await.unwrap_or_else(|_| {
+                                    Err("Refresh background task cancelled or panicked".to_string())
+                                }) {
                                     Ok(latest) => {
                                         token = latest;
                                         tracing::debug!("Token 刷新成功！(Fixed Account Mode)");
                                     }
                                     Err(e) => {
-                                        tracing::warn!("Preferred account token refresh failed: {}", e);
+                                        tracing::warn!(
+                                            "Preferred account token refresh failed: {}",
+                                            e
+                                        );
                                         // 处理可能的封号风险，但作为首发账号继续传递到下层重试或报错
-                                        if e.contains("\"invalid_grant\"") || e.contains("invalid_grant") {
+                                        if e.contains("\"invalid_grant\"")
+                                            || e.contains("invalid_grant")
+                                        {
                                             let _ = self
                                                 .disable_account(
                                                     &token.account_id,
@@ -1763,7 +1799,10 @@ impl TokenManager {
                         }
                     }
 
-                    tracing::debug!("账号 {} 的 token 即将过期，后台任务发起刷新...", email_clone);
+                    tracing::debug!(
+                        "账号 {} 的 token 即将过期，后台任务发起刷新...",
+                        email_clone
+                    );
                     match crate::modules::oauth::refresh_access_token(
                         &refresh_token_clone,
                         Some(&account_id_clone),
@@ -1778,15 +1817,29 @@ impl TokenManager {
                                 entry.timestamp = now_refreshed + token_response.expires_in;
                             }
 
-                            if let Ok(content_str) = tokio::fs::read_to_string(&account_path_clone).await {
-                                if let Ok(mut content) = serde_json::from_str::<serde_json::Value>(&content_str) {
-                                    content["token"]["access_token"] = serde_json::Value::String(token_response.access_token.clone());
-                                    content["token"]["expires_in"] = serde_json::Value::Number(token_response.expires_in.into());
-                                    content["token"]["expiry_timestamp"] = serde_json::Value::Number((now_refreshed + token_response.expires_in).into());
-                                    let _ = tokio::fs::write(&account_path_clone, serde_json::to_string_pretty(&content).unwrap()).await;
+                            if let Ok(content_str) =
+                                tokio::fs::read_to_string(&account_path_clone).await
+                            {
+                                if let Ok(mut content) =
+                                    serde_json::from_str::<serde_json::Value>(&content_str)
+                                {
+                                    content["token"]["access_token"] = serde_json::Value::String(
+                                        token_response.access_token.clone(),
+                                    );
+                                    content["token"]["expires_in"] =
+                                        serde_json::Value::Number(token_response.expires_in.into());
+                                    content["token"]["expiry_timestamp"] =
+                                        serde_json::Value::Number(
+                                            (now_refreshed + token_response.expires_in).into(),
+                                        );
+                                    let _ = tokio::fs::write(
+                                        &account_path_clone,
+                                        serde_json::to_string_pretty(&content).unwrap(),
+                                    )
+                                    .await;
                                 }
                             }
-                            
+
                             if let Some(latest) = tokens_map.get(&account_id_clone) {
                                 Ok(latest.clone())
                             } else {
@@ -1797,17 +1850,15 @@ impl TokenManager {
                     }
                 });
 
-                match spawn_handle.await.unwrap_or_else(|_| Err("Refresh background task cancelled or panicked".to_string())) {
+                match spawn_handle.await.unwrap_or_else(|_| {
+                    Err("Refresh background task cancelled or panicked".to_string())
+                }) {
                     Ok(latest) => {
                         token = latest;
                         tracing::debug!("Token 刷新成功！");
                     }
                     Err(e) => {
-                        tracing::error!(
-                            "Token 刷新失败 ({}): {}，尝试下一个账号",
-                            token.email,
-                            e
-                        );
+                        tracing::error!("Token 刷新失败 ({}): {}，尝试下一个账号", token.email, e);
                         if e.contains("\"invalid_grant\"") || e.contains("invalid_grant") {
                             let _ = self
                                 .disable_account(
