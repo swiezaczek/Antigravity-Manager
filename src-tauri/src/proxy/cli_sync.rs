@@ -363,8 +363,7 @@ pub fn check_cli_installed(app: &CliApp) -> (bool, Option<String>) {
                 let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
                 let cleaned = s
                     .split(|c: char| !c.is_numeric() && c != '.')
-                    .filter(|part| !part.is_empty())
-                    .next_back()
+                    .rfind(|part| !part.is_empty())
                     .map(|p| p.trim())
                     .unwrap_or(&s)
                     .to_string();
