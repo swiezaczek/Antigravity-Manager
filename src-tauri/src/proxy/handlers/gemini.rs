@@ -215,7 +215,10 @@ pub async fn handle_generate(
             }
         }
         // [FIX] Extract requestId before consuming wrapped_body
-        let extracted_request_id = wrapped_body.get("requestId").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let extracted_request_id = wrapped_body
+            .get("requestId")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
 
         let call_result = match upstream
             .call_v1_internal_with_headers(
@@ -298,10 +301,11 @@ pub async fn handle_generate(
                 );
                 tracing::info!(
                     "[Gemini] Registered trace {} → account {}",
-                    trace_id_val, account_id
+                    trace_id_val,
+                    account_id
                 );
             }
-            
+
             // Also register the requestId from the wrapped request body
             if let Some(req_id) = extracted_request_id {
                 crate::proxy::telemetry::registry::TelemetryRegistry::global().register(

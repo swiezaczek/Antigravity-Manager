@@ -286,7 +286,10 @@ pub async fn handle_chat_completions(
             );
         }
         // [FIX] Extract requestId before consuming gemini_body
-        let extracted_request_id = gemini_body.get("requestId").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let extracted_request_id = gemini_body
+            .get("requestId")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
 
         let call_result = match upstream
             .call_v1_internal_with_headers(
@@ -349,7 +352,7 @@ pub async fn handle_chat_completions(
         // [NEW] 提取实际请求的上游端点 URL，用于日志记录和排查
         let upstream_url = response.url().to_string();
         let status = response.status();
-        
+
         // [NEW] 提取官方 TraceID
         let cloud_code_trace_id = response
             .headers()
@@ -368,10 +371,11 @@ pub async fn handle_chat_completions(
                 );
                 tracing::info!(
                     "[OpenAI] Registered trace {} → account {}",
-                    trace_id_val, account_id
+                    trace_id_val,
+                    account_id
                 );
             }
-            
+
             // Also register the requestId from the wrapped request body
             if let Some(req_id) = extracted_request_id {
                 crate::proxy::telemetry::registry::TelemetryRegistry::global().register(

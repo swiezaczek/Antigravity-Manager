@@ -33,7 +33,11 @@ pub fn evaluate(host: &str, path: &str) -> Action {
     } else if path.contains("streamGenerateContent") || path.contains("generateContent") {
         // [FIX] Forward Filar 1 Native AI traffic to the local proxy (Claude/OpenAI wrapping)
         return Action::RouteToAxum;
-    } else if host.contains("play.googleapis.com") || is_clearcut_ip(host) || path.contains("OneCollector") || host.contains("events.data.microsoft.com") {
+    } else if host.contains("play.googleapis.com")
+        || is_clearcut_ip(host)
+        || path.contains("OneCollector")
+        || host.contains("events.data.microsoft.com")
+    {
         // [OPSEC Phase 3] Drop Clearcut telemetry silently.
         // MITM deep_log.txt confirmed Go LS sends to 216.239.34.223 by IP, bypassing hostname rule.
         // Protobuf payloads contain "antigravity", "antigravity_desktop", "ideName..antigravity".
